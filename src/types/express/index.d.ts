@@ -10,6 +10,8 @@
 
 // Import Mongoose types if needed, e.g., for ObjectId
 import mongoose from 'mongoose';
+import { IUser } from '../../models/User';
+import { Request } from 'express';
 
 // Define a simple User payload type for the request object
 // This avoids direct dependency on the full Mongoose model in the global type declaration file
@@ -20,15 +22,18 @@ interface AuthenticatedUser {
   // email?: string;
 }
 
-
 declare global {
   namespace Express {
     interface Request {
       // Add the user property to the Request interface
       // It can hold the authenticated user's data (or null/undefined if not authenticated)
-      user?: AuthenticatedUser | null;
+      user?: IUser;
     }
   }
+}
+
+export interface AuthenticatedRequest extends Request {
+  user?: IUser;
 }
 
 // Adding this export statement ensures this file is treated as a module.
