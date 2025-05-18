@@ -12,7 +12,7 @@ export const createResume = async (
   res: Response,
   next: NextFunction
 ) => {
-  try {
+ 
     if (!req.user?._id) {
       throw new AppError('User not authenticated', 401);
     }
@@ -33,9 +33,7 @@ export const createResume = async (
       success: true,
       data: resume
     });
-  } catch (error) {
-    next(error);
-  }
+
 };
 
 // @desc    Get all resumes for the logged-in user

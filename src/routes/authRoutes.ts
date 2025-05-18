@@ -2,6 +2,7 @@ import express from 'express';
 import { signup, login } from '../controllers/authController';
 import { validate, loginValidation, signupValidation } from '../middleware/validate';
 import { authLimiter } from '../middleware/rateLimiter';
+import { asyncHandler } from '../utils/asyncHandler';
 
 const router = express.Router();
 
@@ -34,7 +35,7 @@ const router = express.Router();
  *       201:
  *         description: User registered successfully
  */
-router.post('/register', authLimiter, validate(signupValidation), signup);
+router.post('/register', authLimiter, validate(signupValidation), asyncHandler(signup));
 
 /**
  * @swagger
@@ -55,6 +56,6 @@ router.post('/register', authLimiter, validate(signupValidation), signup);
  *               password:
  *                 type: string
  */
-router.post('/login', authLimiter, validate(loginValidation), login);
+router.post('/login', authLimiter, validate(loginValidation), asyncHandler(login));
 
 export default router;
