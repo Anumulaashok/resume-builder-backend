@@ -20,6 +20,7 @@
     "express-validator": "^7.0.0",
     "glob": "^10.3.3",
     "helmet": "^7.0.0",
+    "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",
     "lru-cache": "^10.0.1",
     "mongodb": "^6.16.0",
@@ -29,6 +30,7 @@
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^4.6.3",
     "tr46": "^5.1.1",
+    "uuid": "^11.1.0",
     "whatwg-url": "^14.2.0",
     "winston": "^3.10.0",
     "zod": "^3.22.2"

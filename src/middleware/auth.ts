@@ -4,7 +4,8 @@ import { User } from '../models/User';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 
-export const protect = async (
+
+export const authenticate = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction

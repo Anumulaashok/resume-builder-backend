@@ -22,9 +22,9 @@ export class AuthService {
     return {
       success: true,
       message: 'User registered successfully',
-      token: this.generateToken(user._id),
+      token: this.generateToken(user.id),
       user: {
-        id: user._id,
+        id: user.id,
         name: user.name,
         email: user.email
       }
@@ -40,9 +40,9 @@ export class AuthService {
     return {
       success: true,
       message: 'Login successful',
-      token: this.generateToken(user._id),
+      token: this.generateToken(user.id),
       user: {
-        id: user._id,
+        id: user.id,
         name: user.name,
         email: user.email
       }

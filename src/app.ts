@@ -17,7 +17,7 @@ import { connectDB } from './config/db.config';
 // Local imports - routes
 import authRoutes from './routes/authRoutes';
 import resumeRoutes from './routes/resumeRoutes';
-
+import sectionRoutes from './routes/sectionRoutes';
 // Local imports - middleware
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { apiLimiter } from './middleware/rateLimiter';
@@ -52,7 +52,7 @@ class App {
 
     private configureRoutes(): void {
         // API Routes
-        this.app.use('/api/auth', 
+        this.app.use('/api/auth',
             rateLimit({
                 windowMs: 15 * 60 * 1000,
                 max: 100,
@@ -62,10 +62,15 @@ class App {
                 },
                 standardHeaders: true,
                 legacyHeaders: false
-            }), 
+            }),
             authRoutes
         );
+
+
+        // Use routes
+        this.app.use('/api/users', authRoutes);
         this.app.use('/api/resumes', resumeRoutes);
+        this.app.use('/api/sections', sectionRoutes);
 
         // Swagger Documentation
         this.app.use('/', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
