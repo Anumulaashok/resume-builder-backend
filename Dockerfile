@@ -18,4 +18,4 @@ RUN npm run build
 EXPOSE 10000
 
 # Start the application using compiled JavaScript
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/app.js"]
