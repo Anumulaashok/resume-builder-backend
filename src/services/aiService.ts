@@ -1,4 +1,3 @@
-import axios from 'axios';
 import { AppError } from '../utils/appError';
 
 interface AIResponse {

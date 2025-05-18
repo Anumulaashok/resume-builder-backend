@@ -8,6 +8,7 @@ import {
   updateResume,
   deleteResume
 } from '../controllers/resumeController';
+import { asyncHandler } from '../utils/asyncHandler';
 
 const router = express.Router();
 
@@ -16,11 +17,11 @@ router.use(protect);
 
 router.route('/')
   .get(getResumes)
-  .post(validate(resumeValidation), createResume);
+  .post(validate(resumeValidation), asyncHandler(createResume));
 
 router.route('/:id')
   .get(getResumeById)
-  .put(validate(resumeValidation), updateResume)
-  .delete(deleteResume);
+  .put(validate(resumeValidation), asyncHandler(updateResume))
+  .delete(asyncHandler(deleteResume));
 
 export default router;
