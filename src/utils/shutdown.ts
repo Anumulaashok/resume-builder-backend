@@ -28,10 +28,8 @@ export const handleGracefulShutdown = (server: Server) => {
     process.on('SIGINT', shutdown);
     process.on('uncaughtException', (err) => {
         logger.error('Uncaught Exception:', err);
-        shutdown();
     });
     process.on('unhandledRejection', (err) => {
         logger.error('Unhandled Rejection:', err);
-        shutdown();
     });
 };
