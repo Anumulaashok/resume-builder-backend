@@ -14,6 +14,8 @@ export const errorHandler = (
   res: Response,
   next: NextFunction
 ) => {
+  console.error(`Error occurred during ${req.method} ${req.originalUrl}:`, err);
+
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
       status: err.status,
@@ -33,7 +35,10 @@ export const errorHandler = (
 
   res.status(500).json({
     status: 'error',
-    message: 'Internal server error',
+    message:
+      process.env.NODE_ENV === 'development'
+        ? err.message
+        : 'Something went wrong',
   });
 };
 
