@@ -29,7 +29,8 @@
     "zod": "^3.22.2",
     "whatwg-url": "^14.2.0",
     "tr46": "^5.1.1",
-    "glob": "^10.3.0",
+    "glob": "^10.3.3",
+    "lru-cache": "^10.0.1",
     "superagent": "^9.0.0"
   },
   "devDependencies": {
