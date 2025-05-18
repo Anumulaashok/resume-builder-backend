@@ -1,7 +1,7 @@
 {
   "name": "resume-builder-backend",
   "version": "1.0.0",
-  "main": "src/index.ts",
+  "main": "src/app.ts",
   "scripts": {
     "start": "node dist/app.js",
     "dev": "nodemon src/app.ts",
