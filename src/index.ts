@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import { connectDB } from './config/db.config';
 import logger from './utils/logger';
+import { handleGracefulShutdown } from './utils/shutdown';
 
 // Load env vars
 dotenv.config();
@@ -14,9 +15,11 @@ const startServer = async () => {
     await connectDB();
     
     const server = app.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
-      logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`);
+      logger.info(`Server running on port ${PORT}`, { timestamp: new Date().toISOString() });
+      logger.info(`API Documentation available at http://localhost:${PORT}/api-docs`, { timestamp: new Date().toISOString() });
     });
+
+    handleGracefulShutdown(server);
 
     // Add graceful shutdown handling
     process.on('SIGTERM', () => {
