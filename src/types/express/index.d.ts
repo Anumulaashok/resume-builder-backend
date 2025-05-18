@@ -32,9 +32,9 @@ declare global {
   }
 }
 
-export interface AuthenticatedRequest extends Request {
+export interface AuthenticatedRequest<T = {}> extends Request {
   user?: IUser;
 }
 
 // Adding this export statement ensures this file is treated as a module.
-export {};
+export { };

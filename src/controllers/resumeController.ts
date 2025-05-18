@@ -8,31 +8,33 @@ import * as aiService from '../services/aiService';
 // @route   POST /api/resumes
 // @access  Private (Needs Auth Middleware)
 export const createResume = async (
-  req: AuthenticatedRequest,
+  req: AuthenticatedRequest<{ body: IResume }>,
   res: Response,
   next: NextFunction
 ) => {
- 
+  try {
     if (!req.user?._id) {
       throw new AppError('User not authenticated', 401);
     }
 
-    const { personalInfo, summary } = req.body;
-
-    // Basic validation
-    if (!personalInfo || !summary) { // Removed userId check from body
-      return res.status(400).json({ message: 'Missing required fields (personalInfo, summary)' });
+    if (!req.body) {
+      throw new AppError('Missing resume data', 400);
     }
 
-    const resume = await Resume.create({
+    const newResume: IResume = {
       ...req.body,
       userId: req.user._id
-    });
+    };
+
+    const resume = await Resume.create(newResume);
 
     res.status(201).json({
       success: true,
       data: resume
     });
+  } catch (error) {
+    next(error);
+  }
 
 };
 
