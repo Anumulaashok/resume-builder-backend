@@ -15,7 +15,7 @@ COPY . .
 RUN npm run build
 
 # Expose the port
-EXPOSE 3000
+EXPOSE 10000
 
 # Start the application using compiled JavaScript
 CMD ["node", "dist/index.js"]
