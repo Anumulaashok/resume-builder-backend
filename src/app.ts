@@ -1,38 +1,30 @@
-// Load environment variables from .env file first
-import dotenv from 'dotenv';
-dotenv.config();
-
-import express from 'express'; // Use import syntax
-import connectDB from './config/db'; // Use import syntax
-import userRoutes from './routes/userRoutes'; // Use import syntax
-import resumeRoutes from './routes/resumeRoutes'; // Use import syntax
-import templateRoutes from './routes/templateRoutes'; // Import template routes
-
-// Connect to Database
-connectDB(); // Make sure DB connection happens after dotenv is loaded if DB URI is in .env
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import swaggerUi from 'swagger-ui-express';
+import { swaggerOptions } from './config/swagger';
+import authRoutes from './routes/authRoutes';
+import resumeRoutes from './routes/resumeRoutes';
+import { errorHandler, notFound } from './middleware/errorHandler';
+import { apiLimiter } from './middleware/rateLimiter';
 
 const app = express();
 
-// Init Middleware to parse JSON body
+// Middleware
+app.use(helmet());
+app.use(cors());
+app.use(morgan('dev'));
 app.use(express.json());
+app.use(apiLimiter);
 
-// Define Routes
-// Basic route for testing
-app.get('/', (req: express.Request, res: express.Response) => res.send('API Running - Base Route')); // Added types
-
-// Mount User Routes
-app.use('/api/users', userRoutes);
-
-// Mount Resume Routes
+// Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/resumes', resumeRoutes);
+app.use('/', swaggerUi.serve, swaggerUi.setup(swaggerOptions));
 
-// Mount Template Routes
-app.use('/api/templates', templateRoutes);
+// Error Handling
+app.use(notFound);
+app.use(errorHandler);
 
-
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => console.log(`Server started on port ${PORT}`));
-
-// Export the app instance for potential testing or extension
-export default app; // Use export default syntax
+export default app;

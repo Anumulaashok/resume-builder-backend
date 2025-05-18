@@ -1,26 +1,61 @@
-const mongoose = require('mongoose');
+import mongoose, { Document, Schema } from 'mongoose';
 
-const ResumeSchema = new mongoose.Schema({
-  userId: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User', // Reference to the User model
-    required: true
-  },
-  personalInfo: {
-    name: { type: String },
-    email: { type: String },
-    phone: { type: String },
-    address: { type: String },
-    linkedIn: { type: String }, // LinkedIn URL
-    portfolio: { type: String } // Portfolio/Website URL
-  },
-  summary: {
-    type: String
+export interface IResume extends Document {
+  userId: mongoose.Types.ObjectId;
+  title: string;
+  summary?: string;
+  content: {
+    basics: {
+      name: string;
+      label?: string;
+      email: string;
+      phone?: string;
+      location?: {
+        address?: string;
+        city?: string;
+        countryCode?: string;
+        postalCode?: string;
+      };
+    };
+    sections: Array<{
+      id: string;
+      type: string;
+      title: string;
+      content: any[];
+      isCustom?: boolean;
+    }>;
+    sectionOrder: string[];
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const resumeSchema = new Schema({
+  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  title: { type: String, required: true },
+  summary: String,
+  content: {
+    basics: {
+      name: { type: String, required: true },
+      label: String,
+      email: { type: String, required: true },
+      phone: String,
+      location: {
+        address: String,
+        city: String,
+        countryCode: String,
+        postalCode: String
+      }
+    },
+    sections: [{
+      id: { type: String, required: true },
+      type: { type: String, required: true },
+      title: { type: String, required: true },
+      content: [Schema.Types.Mixed],
+      isCustom: Boolean
+    }],
+    sectionOrder: [String]
   }
-  // Add other sections like experience, education, skills etc. later as needed
-}, {
-  // Add timestamps (createdAt, updatedAt) automatically
-  timestamps: true
-});
+}, { timestamps: true });
 
-module.exports = mongoose.model('Resume', ResumeSchema);
+export const Resume = mongoose.model<IResume>('Resume', resumeSchema);

@@ -1,59 +1,59 @@
-import { Request, Response } from 'express'; // Import Request and Response types
-import Resume from '../models/Resume'; // Use import syntax
-import mongoose from 'mongoose'; // Use import syntax
-import * as aiService from '../services/aiService'; // Use import syntax for the service
+import { Request, Response, NextFunction } from 'express';
+import { Resume, IResume } from '../models/Resume';
+import { AppError } from '../utils/appError';
+import { AuthenticatedRequest } from '../types/express';
+import * as aiService from '../services/aiService';
 
 // @desc    Create a new resume
 // @route   POST /api/resumes
 // @access  Private (Needs Auth Middleware)
-export const createResume = async (req: Request, res: Response) => {
-  const userId = req.user?._id; // Get userId from authenticated user
-  const { personalInfo, summary } = req.body;
-
-  // Basic validation
-  if (!personalInfo || !summary) { // Removed userId check from body
-    return res.status(400).json({ message: 'Missing required fields (personalInfo, summary)' });
-  }
-  if (!userId) { // Check if userId is available from token/middleware
-      return res.status(401).json({ message: 'Not authorized, user ID missing' });
-  }
-
-  // No need to validate userId format here
-
+export const createResume = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const newResume = new Resume({
-      userId: userId, // Use userId from authenticated user
-      personalInfo,
-      summary,
-      // Add other fields as they are implemented
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const { personalInfo, summary } = req.body;
+
+    // Basic validation
+    if (!personalInfo || !summary) { // Removed userId check from body
+      return res.status(400).json({ message: 'Missing required fields (personalInfo, summary)' });
+    }
+
+    const resume = await Resume.create({
+      ...req.body,
+      userId: req.user._id
     });
 
-    const savedResume = await newResume.save();
-    res.status(201).json(savedResume);
-
+    res.status(201).json({
+      success: true,
+      data: resume
+    });
   } catch (error) {
-    console.error('Create resume error:', error.message);
-    res.status(500).send('Server error during resume creation');
+    next(error);
   }
 };
 
 // @desc    Get all resumes for the logged-in user
 // @route   GET /api/resumes/my
 // @access  Private (Needs Auth Middleware)
-export const getMyResumes = async (req: Request, res: Response) => {
-  const userId = req.user?._id;
-
-  if (!userId) {
-    // Should not happen if protect middleware is used correctly
-    return res.status(401).json({ message: 'Not authorized, user ID missing' });
-  }
-
+export const getResumes = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const resumes = await Resume.find({ userId: userId });
-    res.json(resumes);
-  } catch (error: any) {
-    console.error('Get my resumes error:', error.message);
-    res.status(500).send('Server error while fetching resumes');
+    const resumes = await Resume.find({ userId: req.user?._id });
+    res.json({
+      success: true,
+      data: resumes
+    });
+  } catch (error) {
+    next(error);
   }
 };
 
@@ -61,153 +61,130 @@ export const getMyResumes = async (req: Request, res: Response) => {
 // @desc    Get a single resume by its ID
 // @route   GET /api/resumes/:resumeId
 // @access  Private (Needs Auth Middleware)
-export const getResumeById = async (req: Request, res: Response) => {
-  const { resumeId } = req.params;
-  const userId = req.user?._id; // Get userId from authenticated user
-
-  // Validate resumeId format
-  if (!mongoose.Types.ObjectId.isValid(resumeId)) {
-    return res.status(400).json({ message: 'Invalid Resume ID format' });
-  }
-
+export const getResumeById = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const resume = await Resume.findById(resumeId);
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId, // Changed from id to resumeId
+      userId: req.user?._id
+    });
 
     if (!resume) {
-      return res.status(404).json({ message: 'Resume not found' });
+      throw new AppError('Resume not found', 404);
     }
 
-    // Check ownership
-    if (resume.userId.toString() !== userId?.toString()) {
-      return res.status(401).json({ message: 'Not authorized to access this resume' });
-    }
-
-    res.json(resume);
-
-  } catch (error: any) { // Add type annotation for error
-    console.error('Get resume by ID error:', error.message);
-    // Handle potential CastError if ID format is valid but doesn't fit ObjectId internal structure
-    if (error.kind === 'ObjectId') {
-        return res.status(404).json({ message: 'Resume not found (invalid ID structure)' });
-    }
-    res.status(500).send('Server error while fetching resume');
+    res.json({
+      success: true,
+      data: resume
+    });
+  } catch (error) {
+    next(error);
   }
 };
 
 // @desc    Generate resume summary from prompt using AI
 // @route   POST /api/resumes/generate
 // @access  Private (Needs Auth Middleware)
-export const generateResumeFromPrompt = async (req: Request, res: Response) => {
-  const userId = req.user?._id; // Get userId from authenticated user
-  const { prompt } = req.body; // Get only prompt from body
+export const generateResumeFromPrompt = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  const userId = req.user?._id;
+  const { prompt } = req.body;
 
-  // Basic validation
-  if (!prompt) { // Removed userId check from body
-    return res.status(400).json({ message: 'Missing required field (prompt)' });
+  if (!prompt) {
+    return next(new AppError('Missing required field (prompt)', 400));
   }
-  if (!userId) { // Check if userId is available from token/middleware
-      return res.status(401).json({ message: 'Not authorized, user ID missing' });
+  if (!userId) {
+    return next(new AppError('Not authorized, user ID missing', 401));
   }
-  // No need to validate userId format from body
 
   try {
-    // 1. Call AI Service
-    console.log(`Generating summary for user ${userId} with prompt: "${prompt}"`);
-    const aiResponse = await aiService.analyzeResumePrompt(prompt);
+    const aiResponse: { summary: string } = await aiService.analyzeResumePrompt(prompt);
 
-    // 2. Find the user's resume
-    // Ensure the resume belongs to the authenticated user
     const resume = await Resume.findOne({ userId: userId });
 
     if (!resume) {
-      // Corrected error message
-      return res.status(404).json({ message: `No resume found for user ${userId}. Create one first via POST /api/resumes.` });
+      return next(
+        new AppError(
+          `No resume found for user ${userId}. Create one first via POST /api/resumes.`,
+          404
+        )
+      );
     }
-    // Ownership is implicitly checked by finding the resume using userId from token
 
-    // 3. Update the resume summary
-    // Storing the raw AI response stringified for now.
-    resume.summary = JSON.stringify(aiResponse);
-    console.log(`Updating resume ${resume._id} summary with AI response.`);
-
-    // 4. Save the updated resume
+    resume.summary = aiResponse.summary;
     const updatedResume = await resume.save();
 
-    // 5. Return the updated resume
-    res.json(updatedResume);
+    res.json({
+      success: true,
+      data: updatedResume
+    });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Generate resume from prompt error:', error.message);
     if (error.message.includes('AI Service')) {
-        res.status(502).json({ message: `AI Service Error: ${error.message}` });
-    } else {
-        res.status(500).send('Server error during resume generation');
+      return next(new AppError(`AI Service Error: ${error.message}`, 502));
     }
+    next(new AppError('Server error during resume generation', 500));
   }
 };
 
 // @desc    Update specific fields of a resume
 // @route   PATCH /api/resumes/:resumeId
 // @access  Private (Needs Auth Middleware)
-export const updateResumeField = async (req: Request, res: Response) => {
-  const { resumeId } = req.params;
-  const updateData = req.body;
-  const userId = req.user?._id; // Get userId from authenticated user
-
-  // Validate resumeId format
-  if (!mongoose.Types.ObjectId.isValid(resumeId)) {
-    return res.status(400).json({ message: 'Invalid Resume ID format' });
-  }
-
-  // Check if update body is empty
-  if (!updateData || Object.keys(updateData).length === 0) {
-    return res.status(400).json({ message: 'Update data cannot be empty' });
-  }
-
-  // Prevent updating userId via this endpoint
-  if (updateData.userId) {
-      delete updateData.userId;
-      // Optionally, return an error if they try to update userId
-      // return res.status(400).json({ message: 'Cannot update userId via this endpoint' });
-  }
-
-
+export const updateResume = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
   try {
-    const updatedResume = await Resume.findByIdAndUpdate(
-      resumeId,
-      { $set: updateData }, // Use $set to update only provided fields
-      resumeId
+    const resume = await Resume.findOneAndUpdate(
+      { _id: req.params.resumeId, userId: req.user?._id }, // Changed from id to resumeId
+      req.body,
+      { new: true, runValidators: true }
     );
 
-    if (!resumeToUpdate) {
-      return res.status(404).json({ message: 'Resume not found' });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
     }
 
-    // Check ownership before attempting update
-    if (resumeToUpdate.userId.toString() !== userId?.toString()) {
-        return res.status(401).json({ message: 'Not authorized to update this resume' });
-    }
-
-    // Apply updates using $set (Mongoose handles $set implicitly with save() on existing doc)
-    Object.assign(resumeToUpdate, updateData);
-
-    // Save the updated document (runs validators)
-    const savedResume = await resumeToUpdate.save();
-
-    res.json(savedResume);
-
-  } catch (error: any) { // Add type annotation for error
-    console.error('Update resume field error:', error.message);
-    // Handle validation errors specifically
-    if (error.name === 'ValidationError') {
-      return res.status(400).json({ message: 'Validation Error', errors: error.errors });
-    }
-    // Handle CastError if ID format is valid but leads to DB error
-    if (error.name === 'CastError') {
-        return res.status(400).json({ message: 'Invalid ID format causing database error' });
-    }
-    res.status(500).send('Server error during resume update');
+    res.json({
+      success: true,
+      data: resume
+    });
+  } catch (error) {
+    next(error);
   }
 };
 
-// Remove module.exports as functions are exported individually
+// @desc    Delete a resume
+// @route   DELETE /api/resumes/:id
+// @access  Private (Needs Auth Middleware)
+export const deleteResume = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOneAndDelete({
+      _id: req.params.resumeId, // Changed from id to resumeId
+      userId: req.user?._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    res.json({
+      success: true,
+      data: null
+    });
+  } catch (error) {
+    next(error);
+  }
+};
