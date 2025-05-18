@@ -1,6 +1,6 @@
 import { Server } from 'http';
 import mongoose from 'mongoose';
-import { logger } from './logger';
+import  logger  from './logger';
 
 export const handleGracefulShutdown = (server: Server) => {
     const shutdown = async () => {

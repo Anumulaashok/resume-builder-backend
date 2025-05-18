@@ -81,3 +81,8 @@ typings/
 
 # VSCode files
 .vscode/
+
+# Build output
+dist/
+# npm package lock file
+package-lock.json

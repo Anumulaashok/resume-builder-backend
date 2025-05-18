@@ -6,7 +6,6 @@ import swaggerUi from 'swagger-ui-express';
 import { swaggerOptions } from './config/swagger';
 import authRoutes from './routes/authRoutes';
 import resumeRoutes from './routes/resumeRoutes';
-import healthRoutes from './routes/health.routes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { apiLimiter } from './middleware/rateLimiter';
 
@@ -22,10 +21,12 @@ app.use(apiLimiter);
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/resumes', resumeRoutes);
-app.use('/health', healthRoutes);
 app.use('/', swaggerUi.serve, swaggerUi.setup(swaggerOptions));
 app.get('/started', (_req, res) => {
     res.json({ message: 'App started' });
+});
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
 // Error Handling
 app.use(notFound);

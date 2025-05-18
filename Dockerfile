@@ -6,13 +6,16 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm install
+RUN npm ci
 
 # Copy rest of the application code
 COPY . .
 
-# Expose the port your app runs on
-EXPOSE 3000
+# Build TypeScript code
+RUN npm run build
 
-# Start the application
-CMD ["npm", "start"]
+# Expose the port
+EXPOSE 10000
+
+# Start the application using compiled JavaScript
+CMD ["node", "dist/index.js"]
