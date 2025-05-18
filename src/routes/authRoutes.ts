@@ -7,7 +7,7 @@ const router = express.Router();
 
 /**
  * @swagger
- * /api/auth/signup:
+ * /auth/register:
  *   post:
  *     tags: [Auth]
  *     summary: Register a new user
@@ -17,16 +17,24 @@ const router = express.Router();
  *         application/json:
  *           schema:
  *             type: object
- *             required: [name, email, password]
+ *             required:
+ *               - email
+ *               - password
+ *               - name
  *             properties:
- *               name:
- *                 type: string
  *               email:
  *                 type: string
+ *                 format: email
  *               password:
  *                 type: string
+ *                 format: password
+ *               name:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: User registered successfully
  */
-router.post('/signup', authLimiter, validate(signupValidation), signup);
+router.post('/register', authLimiter, validate(signupValidation), signup);
 
 /**
  * @swagger
