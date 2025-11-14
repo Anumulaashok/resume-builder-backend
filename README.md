@@ -155,3 +155,5 @@ The base URL depends on your running environment (e.g., `http://localhost:PORT` 
     5.  Implement logic to handle token expiration and potentially refresh tokens if using that strategy.
 *   **API Interaction:** Use standard HTTP requests (e.g., via `fetch` API or libraries like `axios`) to interact with the documented endpoints. Send request bodies as JSON and handle JSON responses.
 *   **Error Handling:** Implement frontend logic to handle API errors based on the status codes returned by the backend (e.g., 401 Unauthorized, 404 Not Found, 400 Bad Request, 500 Internal Server Error).
+
+
