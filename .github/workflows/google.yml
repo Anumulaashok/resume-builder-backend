@@ -45,7 +45,7 @@ env:
   DEPLOYMENT_NAME: 'resume-builder-backend' # TODO: update to your deployment name
   REPOSITORY: 'resume-builder-backend' # TODO: update to your Artifact Registry docker repository name
   IMAGE: 'us-east1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/resume-builder-backend:latest'
-  WORKLOAD_IDENTITY_PROVIDER: '//iam.googleapis.com/projects/934303767068/locations/global/workloadIdentityPools/github-actions-pool/providers/my-pool'
+  WORKLOAD_IDENTITY_PROVIDER: "projects/934303767068/locations/global/workloadIdentityPools/github-actions-pool/providers/my-pool"
   
 # https://iam.googleapis.com/projects/934303767068/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions
 # https://iam.googleapis.com/projects/934303767068/locations/global/workloadIdentityPools/github-actions-pool/providers/my-pool
