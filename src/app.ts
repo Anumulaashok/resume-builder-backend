@@ -151,6 +151,7 @@ class App {
     }
 }
 
+
 // Initialize and start the application
 const appInstance = new App();
 appInstance.start();
