@@ -157,3 +157,166 @@ The base URL depends on your running environment (e.g., `http://localhost:PORT` 
 *   **Error Handling:** Implement frontend logic to handle API errors based on the status codes returned by the backend (e.g., 401 Unauthorized, 404 Not Found, 400 Bad Request, 500 Internal Server Error).
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ClinicalOps Kube Manager
+
+CLI tool to manage **Dev** and **Stage** Kubernetes environments through SSH SOCKS proxy.
+
+## Setup
+
+### 1. Shell Alias (optional)
+
+Type `kitty` instead of `make`:
+
+```bash
+# Already added to ~/.zshrc
+alias kitty="make"
+source ~/.zshrc
+```
+
+### 2. Prerequisites
+
+- `kubectl`
+- `az` (Azure CLI) — required for Stage only
+- `ssh` access to jump hosts
+- macOS (for `osascript` terminal features)
+
+---
+
+## Quick Start
+
+```bash
+# Start dev environment (proxy + all port-forwards)
+make start-dev
+
+# Check health
+make doctor-dev
+
+# List pods
+make pods
+
+# Stream logs (interactive or filtered)
+make get-logs
+make get-logs gateway
+
+# Stop everything
+make stop-dev
+```
+
+---
+
+## Environments
+
+| | DEV | STAGE |
+|---|---|---|
+| **Namespace** | `clinicalops` | `clinicalops` |
+| **Context** | `clinicalops-dev-aks` | `clinicalops-stage-aks` |
+| **Proxy Port** | `1080` | `1081` |
+| **SSH Host** | `74.249.211.254` | `104.43.139.144` |
+
+---
+
+## All Commands
+
+### DEV
+
+| Command | Description |
+|---|---|
+| `make start-dev` | Start SOCKS proxy + all port-forwards |
+| `make stop-dev` | Kill proxy + port-forwards + clean logs |
+| `make doctor-dev` | Health check (proxy + cluster connectivity) |
+| `make pods` | List pods |
+| `make get-logs [filter]` | Stream logs (interactive or regex filter) |
+| `make forward-all` | Start all port-forwards in background |
+| `make start-new-dev` | Open new terminal with DEV proxy set |
+| `make logs-new-dev` | Open new terminal streaming DEV logs |
+
+### STAGE
+
+| Command | Description |
+|---|---|
+| `make start-stage` | Start proxy + fetch AKS creds + port-forwards |
+| `make stop-stage` | Kill proxy + port-forwards + clean logs |
+| `make doctor-stage` | Health check (proxy + cluster connectivity) |
+| `make pods-stage` | List pods |
+| `make get-logs-stage [filter]` | Stream logs (interactive or regex filter) |
+| `make forward-all-stage` | Start all port-forwards in background |
+| `make start-new-stage` | Open new terminal with STAGE proxy set |
+| `make logs-new-stage` | Open new terminal streaming STAGE logs |
+
+### Individual Port Forwards
+
+| Target | Local Port |
+|---|---|
+| `forward-document` / `forward-document-stage` | `8080` |
+| `forward-gateway` / `forward-gateway-stage` | `8081` |
+| `forward-internal-api` / `forward-internal-api-stage` | `8082` |
+| `forward-auth` / `forward-auth-stage` | `8083` |
+| `forward-workflow` / `forward-workflow-stage` | `8084` |
+| `forward-vault` / `forward-vault-stage` | `8085` |
+| `forward-external` / `forward-external-stage` | `8086` |
+| `forward-ui` / `forward-ui-stage` | `3000` |
+| `forward-voice-gateway` / `forward-voice-gateway-stage` | `8087` |
+| `forward-scheduling-voice` / `forward-scheduling-voice-stage` | `8088` |
+
+---
+
+## Logs
+
+```bash
+# Interactive — shows pod list, pick by number/name/regex
+make get-logs
+
+# Filter by name or regex
+make get-logs gateway
+make get-logs "auth\|workflow"
+
+# Stage
+make get-logs-stage workflow
+```
+
+Logs stream in parallel for all matching pods with headers.
+
+---
+
+## How It Works
+
+1. **SSH SOCKS Proxy** — `start-dev`/`start-stage` opens an SSH tunnel (`-D` flag) creating a local SOCKS5 proxy
+2. **Explicit Proxy** — every `kubectl` call is prefixed with `HTTPS_PROXY=socks5://127.0.0.1:<port>` inline, never relying on global env vars
+3. **Explicit Context** — every `kubectl` call uses `--context`, never relying on current kubeconfig context
+4. **Isolation** — DEV (port 1080) and STAGE (port 1081) never interfere with each other
+5. **Health Checks** — `doctor-*` validates proxy (`lsof`) and cluster connectivity (`kubectl get ns`) before any operation
+6. **AKS Credentials** — `start-stage` fetches credentials with proxy **disabled** (Azure CLI doesn't need the tunnel)
+7. **Clean Shutdown** — `stop-*` kills only processes for that environment using context-specific `pgrep` patterns
+
+---
+
+## Log Files
+
+Background processes write to `/tmp/`:
+
+| File | Purpose |
+|---|---|
+| `/tmp/dev-proxy.log` | DEV SSH tunnel output |
+| `/tmp/stage-proxy.log` | STAGE SSH tunnel output |
+| `/tmp/dev-forward-*.log` | DEV port-forward logs |
+| `/tmp/stage-forward-*.log` | STAGE port-forward logs |
+
+Cleaned up automatically by `make stop-dev` / `make stop-stage`.
+
+
+
