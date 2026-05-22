@@ -3,6 +3,7 @@ import { Resume, IResume } from '../models/Resume';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
+import logger from '../utils/logger';
 
 // @desc    Create a new resume
 // @route   POST /api/resumes
@@ -85,7 +86,7 @@ export const getResumeById = async (
   }
 };
 
-// @desc    Generate resume summary from prompt using AI
+// @desc    Generate a full resume from prompt using AI
 // @route   POST /api/resumes/generate
 // @access  Private (Needs Auth Middleware)
 export const generateResumeFromPrompt = async (
@@ -104,31 +105,24 @@ export const generateResumeFromPrompt = async (
   }
 
   try {
-    const aiResponse: { summary: string } = await aiService.analyzeResumePrompt(prompt);
+    const aiResponse = await aiService.analyzeResumePrompt(prompt);
 
-    const resume = await Resume.findOne({ userId: userId });
+    const newResumeData: IResume = {
+      ...aiResponse,
+      userId: userId
+    } as any;
 
-    if (!resume) {
-      return next(
-        new AppError(
-          `No resume found for user ${userId}. Create one first via POST /api/resumes.`,
-          404
-        )
-      );
-    }
+    const newResume = await Resume.create(newResumeData);
 
-    resume.summary = aiResponse.summary;
-    const updatedResume = await resume.save();
-
-    res.json({
+    res.status(201).json({
       success: true,
-      data: updatedResume
+      data: newResume
     });
 
   } catch (error: any) {
-    console.error('Generate resume from prompt error:', error.message);
-    if (error.message.includes('AI Service')) {
-      return next(new AppError(`AI Service Error: ${error.message}`, 502));
+    logger.error(`Generate resume from prompt error: ${error.message}`);
+    if (error.message.includes('AI Service') || error.message.includes('malformed')) {
+      return next(new AppError(`${error.message}`, 502));
     }
     next(new AppError('Server error during resume generation', 500));
   }
