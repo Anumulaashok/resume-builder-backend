@@ -6,7 +6,8 @@ import {
   getResumes,
   getResumeById,
   updateResume,
-  deleteResume
+  deleteResume,
+  undoResume
 } from '../controllers/resumeController';
 import { asyncHandler } from '../utils/asyncHandler';
 
@@ -19,9 +20,12 @@ router.route('/')
   .get(getResumes)
   .post(validate(resumeValidation), asyncHandler(createResume));
 
-router.route('/:id')
+router.route('/:resumeId')
   .get(getResumeById)
   .put(validate(resumeValidation), asyncHandler(updateResume))
+  .patch(validate(resumeValidation), asyncHandler(updateResume))
   .delete(asyncHandler(deleteResume));
+
+router.post('/:resumeId/undo', asyncHandler(undoResume));
 
 export default router;
