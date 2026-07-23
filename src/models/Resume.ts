@@ -4,6 +4,8 @@ export interface IResume extends Document {
   userId: mongoose.Types.ObjectId;
   title: string;
   summary?: string;
+  templateId?: string;
+  themeConfig?: Record<string, any>;
   content: {
     basics: {
       name: string;
@@ -26,6 +28,10 @@ export interface IResume extends Document {
     }>;
     sectionOrder: string[];
   };
+  history?: Array<{
+    content: any;
+    updatedAt: Date;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -34,6 +40,8 @@ const resumeSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   title: { type: String, required: true },
   summary: String,
+  templateId: String,
+  themeConfig: Schema.Types.Mixed,
   content: {
     basics: {
       name: { type: String, required: true },
@@ -55,7 +63,11 @@ const resumeSchema = new Schema({
       isCustom: Boolean
     }],
     sectionOrder: [String]
-  }
+  },
+  history: [{
+    content: Schema.Types.Mixed,
+    updatedAt: { type: Date, default: Date.now }
+  }]
 }, { timestamps: true });
 
 export const Resume = mongoose.model<IResume>('Resume', resumeSchema);

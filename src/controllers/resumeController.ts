@@ -143,15 +143,29 @@ export const updateResume = async (
   next: NextFunction
 ) => {
   try {
-    const resume = await Resume.findOneAndUpdate(
-      { _id: req.params.resumeId, userId: req.user?._id }, // Changed from id to resumeId
-      req.body,
-      { new: true, runValidators: true }
-    );
-
-    if (!resume) {
+    const existingResume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user?._id });
+    if (!existingResume) {
       throw new AppError('Resume not found', 404);
     }
+
+    // Save current content to history if there are changes to content
+    if (req.body.content && JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content)) {
+      if (!existingResume.history) {
+        existingResume.history = [];
+      }
+      existingResume.history.push({
+        content: existingResume.content,
+        updatedAt: new Date()
+      });
+      // Keep only the last 20 revisions to prevent document from growing indefinitely
+      if (existingResume.history.length > 20) {
+        existingResume.history.shift();
+      }
+    }
+
+    // Apply updates
+    Object.assign(existingResume, req.body);
+    const resume = await existingResume.save();
 
     res.json({
       success: true,
@@ -183,6 +197,41 @@ export const deleteResume = async (
     res.json({
       success: true,
       data: null
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Undo the last resume change
+// @route   POST /api/resumes/:resumeId/undo
+// @access  Private (Needs Auth Middleware)
+export const undoResume = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user?._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    if (!resume.history || resume.history.length === 0) {
+      throw new AppError('No history available to undo', 400);
+    }
+
+    // Pop the last history state
+    const lastState = resume.history.pop();
+    
+    // Restore the content
+    resume.content = lastState!.content;
+
+    const updatedResume = await resume.save();
+
+    res.json({
+      success: true,
+      data: updatedResume
     });
   } catch (error) {
     next(error);
