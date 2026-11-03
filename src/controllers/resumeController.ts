@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { Resume, IResume } from '../models/Resume';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
@@ -237,3 +238,173 @@ export const undoResume = async (
     next(error);
   }
 };
+
+// @desc    Get a publicly shared resume by its share token
+// @route   GET /api/resumes/share/:shareToken
+// @access  Public (Unauthenticated)
+export const getPublicResumeByToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { shareToken } = req.params;
+    if (!shareToken) {
+      throw new AppError('Share token is required', 400);
+    }
+
+    const resume = await Resume.findOne({
+      'sharing.shareToken': shareToken,
+      'sharing.isPublic': true
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found or share link is inactive or revoked', 404);
+    }
+
+    // Prepare public payload with privacy redaction
+    const resumeObj = resume.toObject ? resume.toObject() : JSON.parse(JSON.stringify(resume));
+    const rawContent = resumeObj.content || { basics: {}, sections: [], sectionOrder: [] };
+    const sanitizedContent = {
+      ...rawContent,
+      basics: {
+        ...(rawContent.basics || {})
+      }
+    };
+
+    const privacy = resume.sharing?.privacy || { hideEmail: false, hidePhone: false, hideAddress: false };
+
+    if (privacy.hideEmail) {
+      delete sanitizedContent.basics.email;
+    }
+    if (privacy.hidePhone) {
+      delete sanitizedContent.basics.phone;
+    }
+    if (privacy.hideAddress) {
+      if (sanitizedContent.basics.location) {
+        delete sanitizedContent.basics.location.address;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        _id: resume._id,
+        title: resume.title,
+        summary: resume.summary,
+        templateId: resume.templateId,
+        themeConfig: resume.themeConfig,
+        content: sanitizedContent,
+        sharing: {
+          isPublic: true,
+          privacy: {
+            hideEmail: !!privacy.hideEmail,
+            hidePhone: !!privacy.hidePhone,
+            hideAddress: !!privacy.hideAddress
+          }
+        },
+        createdAt: resume.createdAt,
+        updatedAt: resume.updatedAt
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get sharing settings for a resume
+// @route   GET /api/resumes/:resumeId/share
+// @access  Private (Needs Auth Middleware)
+export const getShareSettings = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user?._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const sharing = resume.sharing || {
+      isPublic: false,
+      shareToken: null,
+      privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
+    };
+
+    res.json({
+      success: true,
+      data: sharing
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update sharing settings for a resume
+// @route   PATCH /api/resumes/:resumeId/share
+// @access  Private (Needs Auth Middleware)
+export const updateShareSettings = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user?._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    if (!resume.sharing) {
+      resume.sharing = {
+        isPublic: false,
+        shareToken: null,
+        privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
+      };
+    }
+
+    const { isPublic, privacy, regenerateToken } = req.body;
+
+    if (typeof isPublic === 'boolean') {
+      resume.sharing.isPublic = isPublic;
+      if (isPublic) {
+        // If enabling public sharing and no token exists or regenerate requested
+        if (!resume.sharing.shareToken || regenerateToken) {
+          resume.sharing.shareToken = crypto.randomBytes(16).toString('hex');
+        }
+      } else {
+        // When toggling off public sharing, revoke token
+        resume.sharing.shareToken = null;
+      }
+    } else if (regenerateToken) {
+      resume.sharing.shareToken = crypto.randomBytes(16).toString('hex');
+      resume.sharing.isPublic = true;
+    }
+
+    if (privacy) {
+      resume.sharing.privacy = {
+        hideEmail: typeof privacy.hideEmail === 'boolean' ? privacy.hideEmail : (resume.sharing.privacy?.hideEmail ?? false),
+        hidePhone: typeof privacy.hidePhone === 'boolean' ? privacy.hidePhone : (resume.sharing.privacy?.hidePhone ?? false),
+        hideAddress: typeof privacy.hideAddress === 'boolean' ? privacy.hideAddress : (resume.sharing.privacy?.hideAddress ?? false)
+      };
+    }
+
+    await resume.save();
+
+    res.json({
+      success: true,
+      data: resume.sharing
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
