@@ -13,6 +13,7 @@ export const signupValidation = [
 
 export const resumeValidation = [
   body('title').trim().notEmpty(),
+  body('themeConfig').optional().isObject(),
   body('content.basics.name').trim().notEmpty(),
   body('content.basics.email').isEmail(),
   body('content.sections').isArray(),
