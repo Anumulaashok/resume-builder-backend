@@ -67,13 +67,14 @@ class App {
         );
         this.app.use('/api/resumes', resumeRoutes);
 
-        // Swagger Documentation
-        this.app.use('/', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
         // Health Check
         this.app.get('/health', (_req, res) => {
             res.status(200).json({ status: 'ok' });
         });
+
+        // Swagger Documentation
+        this.app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+        this.app.use('/', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
     }
 
     private configureErrorHandling(): void {
@@ -103,7 +104,8 @@ class App {
     private handleServerErrors(): void {
         this.server?.on('error', (err: NodeJS.ErrnoException) => {
             if (err.code === 'EADDRINUSE') {
-                logger.error(`Port ${process.env.PORT} is already in use`);
+                const port = process.env.PORT || 10000;
+                logger.error(`Port ${port} is already in use`);
                 process.exit(1);
             }
             logger.error('Server error:', err);
