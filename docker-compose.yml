@@ -1,0 +1,50 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "10000:10000"
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/resumedb
+      - MONGODB_URI=mongodb://mongo:27017/resumedb
+      - PORT=10000
+      - JWT_SECRET=${JWT_SECRET:-resume_builder_jwt_secret_key_2026}
+      - NODE_ENV=production
+    depends_on:
+      mongo:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - BACKEND_URL=http://backend:10000
+      - NODE_ENV=production
+    depends_on:
+      - backend
+    links:
+      - backend
+
+volumes:
+  mongo_data:
