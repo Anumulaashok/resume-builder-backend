@@ -148,13 +148,17 @@ export const updateResume = async (
       throw new AppError('Resume not found', 404);
     }
 
-    // Save current content to history if there are changes to content
-    if (req.body.content && JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content)) {
+    // Save current content and themeConfig to history if there are changes
+    const contentChanged = Boolean(req.body.content && JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content));
+    const themeChanged = Boolean(req.body.themeConfig !== undefined && JSON.stringify(existingResume.themeConfig) !== JSON.stringify(req.body.themeConfig));
+
+    if (contentChanged || themeChanged) {
       if (!existingResume.history) {
         existingResume.history = [];
       }
       existingResume.history.push({
         content: existingResume.content,
+        themeConfig: existingResume.themeConfig,
         updatedAt: new Date()
       });
       // Keep only the last 20 revisions to prevent document from growing indefinitely
@@ -224,8 +228,11 @@ export const undoResume = async (
     // Pop the last history state
     const lastState = resume.history.pop();
     
-    // Restore the content
+    // Restore the content and themeConfig
     resume.content = lastState!.content;
+    if (lastState && 'themeConfig' in lastState) {
+      resume.themeConfig = lastState.themeConfig;
+    }
 
     const updatedResume = await resume.save();
 
