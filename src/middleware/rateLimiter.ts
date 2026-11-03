@@ -15,3 +15,15 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+export const publicShareLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 60, // Limit each IP to 60 requests per 15 minutes
+  message: {
+    success: false,
+    message: 'Too many requests for shared resume. Please try again later.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
