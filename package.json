@@ -14,6 +14,7 @@
     "docs": "swagger-autogen"
   },
   "dependencies": {
+    "@types/multer": "^2.3.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
@@ -27,6 +28,7 @@
     "mongodb": "^6.16.0",
     "mongoose": "^7.5.0",
     "morgan": "^1.10.0",
+    "multer": "^2.5.0",
     "superagent": "^9.0.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^4.6.3",
