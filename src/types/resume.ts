@@ -44,6 +44,8 @@ export interface Resume {
   id: string;
   userId: string;
   title: string;
+  templateId?: string;
+  themeConfig?: Record<string, any>;
   createdAt: string;
   updatedAt: string;
   sharing?: ResumeSharing;

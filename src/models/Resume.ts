@@ -43,6 +43,7 @@ export interface IResume extends Document {
   };
   history?: Array<{
     content: any;
+    themeConfig?: any;
     updatedAt: Date;
   }>;
   createdAt: Date;
@@ -88,6 +89,7 @@ const resumeSchema = new Schema({
   },
   history: [{
     content: Schema.Types.Mixed,
+    themeConfig: Schema.Types.Mixed,
     updatedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true });
