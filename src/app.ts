@@ -17,10 +17,14 @@ import { connectDB } from './config/db.config';
 // Local imports - routes
 import authRoutes from './routes/authRoutes';
 import resumeRoutes from './routes/resumeRoutes';
+import portfolioRoutes from './routes/portfolioRoutes';
+import { getPublicPortfolio } from './controllers/portfolioController';
+import { asyncHandler } from './utils/asyncHandler';
+import path from 'path';
 
 // Local imports - middleware
 import { errorHandler, notFound } from './middleware/errorHandler';
-import { apiLimiter } from './middleware/rateLimiter';
+import { apiLimiter, publicPortfolioLimiter } from './middleware/rateLimiter';
 import { requestLogger } from './middleware/requestLogger';
 
 // Local imports - utils
@@ -42,12 +46,13 @@ class App {
 
     private configureMiddleware(): void {
         this.app.set('trust proxy', 1);
-        this.app.use(helmet());
+        this.app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
         this.app.use(cors());
         this.app.use(morgan('dev'));
         this.app.use(express.json());
         this.app.use(requestLogger);
         this.app.use(apiLimiter);
+        this.app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));
     }
 
     private configureRoutes(): void {
@@ -66,6 +71,10 @@ class App {
             authRoutes
         );
         this.app.use('/api/resumes', resumeRoutes);
+        this.app.use('/api/portfolios', portfolioRoutes);
+
+        // Direct public slug route for published portfolios
+        this.app.get('/p/:slug', publicPortfolioLimiter, asyncHandler(getPublicPortfolio));
 
         // Health Check
         this.app.get('/health', (_req, res) => {
@@ -155,6 +164,9 @@ class App {
 
 // Initialize and start the application
 const appInstance = new App();
-appInstance.start();
+if (process.env.NODE_ENV !== 'test') {
+    appInstance.start();
+}
 
 export default appInstance.getApp();
+
