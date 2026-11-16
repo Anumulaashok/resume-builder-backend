@@ -3,6 +3,8 @@
 
 # Node dependencies
 node_modules/
+uploads/*
+!uploads/.gitkeep
 
 # Logs
 logs
