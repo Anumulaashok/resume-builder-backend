@@ -28,12 +28,25 @@ export interface ResumeContent {
   sectionOrder: string[];
 }
 
+export interface PrivacySettings {
+  hideEmail: boolean;
+  hidePhone: boolean;
+  hideAddress: boolean;
+}
+
+export interface ResumeSharing {
+  isPublic: boolean;
+  shareToken?: string | null;
+  privacy: PrivacySettings;
+}
+
 export interface Resume {
   id: string;
   userId: string;
   title: string;
   createdAt: string;
   updatedAt: string;
+  sharing?: ResumeSharing;
   content: ResumeContent;
 }
 
