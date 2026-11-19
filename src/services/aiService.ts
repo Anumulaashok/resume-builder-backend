@@ -2,10 +2,6 @@ import { z } from 'zod';
 import { AppError } from '../utils/appError';
 import logger from '../utils/logger';
 
-interface AIResponse {
-  summary: string;
-}
-
 // Zod Schema for Resume Generation matching the Mongoose model
 const LocationSchema = z.object({
   address: z.string().optional(),
@@ -42,13 +38,20 @@ export const GeneratedResumeSchema = z.object({
 
 export type GeneratedResume = z.infer<typeof GeneratedResumeSchema>;
 
-const MAX_RETRIES = 3;
+// Bounded so retries finish inside the 15s serverless function limit.
+const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 1000;
-const TIMEOUT_MS = 30000;
+const TIMEOUT_MS = 5000;
 
-export const analyzeResumePrompt = async (prompt: string): Promise<GeneratedResume> => {
-  const apiUrl = process.env.LLAMA_API_URL || 'https://api.openai.com/v1/chat/completions';
+export type AIResumeResult = Partial<GeneratedResume> & { summary: string };
+
+export const analyzeResumePrompt = async (prompt: string): Promise<AIResumeResult> => {
+  const apiUrl = process.env.LLAMA_API_URL;
   const apiKey = process.env.LLAMA_API_KEY || '';
+
+  if (!apiUrl) {
+    return { summary: `[AI placeholder] Generated summary based on: ${prompt}` };
+  }
 
   const requestBody = {
     model: 'gpt-3.5-turbo',
@@ -129,7 +132,7 @@ Return ONLY valid JSON. No markdown, no explanations.`
         throw new Error('AI generated malformed structure that failed validation.');
       }
 
-      return result.data;
+      return { ...result.data, summary: result.data.summary ?? '' };
     } catch (error: any) {
       attempt++;
       logger.warn(`AI generation attempt ${attempt} failed: ${error.message}`);

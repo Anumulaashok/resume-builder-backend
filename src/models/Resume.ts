@@ -1,9 +1,24 @@
 import mongoose, { Document, Schema } from 'mongoose';
 
+export interface IPrivacySettings {
+  hideEmail: boolean;
+  hidePhone: boolean;
+  hideAddress: boolean;
+}
+
+export interface ISharing {
+  isPublic: boolean;
+  shareToken?: string | null;
+  privacy: IPrivacySettings;
+}
+
 export interface IResume extends Document {
   userId: mongoose.Types.ObjectId;
   title: string;
   summary?: string;
+  templateId?: string;
+  themeConfig?: Record<string, any>;
+  sharing?: ISharing;
   content: {
     basics: {
       name: string;
@@ -26,6 +41,11 @@ export interface IResume extends Document {
     }>;
     sectionOrder: string[];
   };
+  history?: Array<{
+    content: any;
+    themeConfig?: any;
+    updatedAt: Date;
+  }>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -34,6 +54,17 @@ const resumeSchema = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
   title: { type: String, required: true },
   summary: String,
+  templateId: String,
+  themeConfig: Schema.Types.Mixed,
+  sharing: {
+    isPublic: { type: Boolean, default: false },
+    shareToken: { type: String, default: null, index: true },
+    privacy: {
+      hideEmail: { type: Boolean, default: false },
+      hidePhone: { type: Boolean, default: false },
+      hideAddress: { type: Boolean, default: false }
+    }
+  },
   content: {
     basics: {
       name: { type: String, required: true },
@@ -55,7 +86,12 @@ const resumeSchema = new Schema({
       isCustom: Boolean
     }],
     sectionOrder: [String]
-  }
+  },
+  history: [{
+    content: Schema.Types.Mixed,
+    themeConfig: Schema.Types.Mixed,
+    updatedAt: { type: Date, default: Date.now }
+  }]
 }, { timestamps: true });
 
 export const Resume = mongoose.model<IResume>('Resume', resumeSchema);

@@ -6,6 +6,7 @@ interface ExtendedError extends Error {
   statusCode?: number;
   status?: string;
   code?: number;
+  errors?: Record<string, { message: string }>;
 }
 
 export const errorHandler = (
@@ -18,14 +19,24 @@ export const errorHandler = (
 
   if (err instanceof AppError) {
     return res.status(err.statusCode).json({
+      success: false,
       status: err.status,
       message: err.message,
     });
   }
 
-  // Handle Mongoose validation errors
+  if (err.name === 'CastError') {
+    return res.status(404).json({ success: false, status: 'fail', message: 'Resource not found' });
+  }
+
+  if (err.name === 'ValidationError') {
+    const message = Object.values(err.errors || {}).map((e) => e.message).join(', ') || err.message;
+    return res.status(400).json({ success: false, status: 'fail', message });
+  }
+
   if (err.code === 11000) {
     return res.status(400).json({
+      success: false,
       status: 'fail',
       message: 'Duplicate field value',
     });
@@ -34,6 +45,7 @@ export const errorHandler = (
   logger.error(err);
 
   res.status(500).json({
+    success: false,
     status: 'error',
     message:
       process.env.NODE_ENV === 'development'

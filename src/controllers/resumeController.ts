@@ -1,9 +1,19 @@
 import { Request, Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { Resume, IResume } from '../models/Resume';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
-import logger from '../utils/logger';
+import { analyzeJobMatch } from '../services/jobMatchService';
+
+const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
+
+// Restrict client input to editable fields so ownership, sharing and history can't be overwritten.
+const pickEditableFields = (body: Record<string, unknown> = {}) =>
+  EDITABLE_RESUME_FIELDS.reduce<Record<string, unknown>>((acc, key) => {
+    if (body[key] !== undefined) acc[key] = body[key];
+    return acc;
+  }, {});
 
 // @desc    Create a new resume
 // @route   POST /api/resumes
@@ -22,12 +32,10 @@ export const createResume = async (
       throw new AppError('Missing resume data', 400);
     }
 
-    const newResume: IResume = {
-      ...req.body,
+    const resume = await Resume.create({
+      ...pickEditableFields(req.body),
       userId: req.user._id
-    };
-
-    const resume = await Resume.create(newResume);
+    });
 
     res.status(201).json({
       success: true,
@@ -86,8 +94,8 @@ export const getResumeById = async (
   }
 };
 
-// @desc    Generate a full resume from prompt using AI
-// @route   POST /api/resumes/generate
+// @desc    Generate resume content from prompt using AI
+// @route   POST /api/resumes/:resumeId/generate
 // @access  Private (Needs Auth Middleware)
 export const generateResumeFromPrompt = async (
   req: AuthenticatedRequest,
@@ -105,26 +113,30 @@ export const generateResumeFromPrompt = async (
   }
 
   try {
+    const resume = await Resume.findOne({ _id: req.params.resumeId, userId });
+
+    if (!resume) {
+      return next(new AppError('Resume not found', 404));
+    }
+
     const aiResponse = await aiService.analyzeResumePrompt(prompt);
 
-    const newResumeData: IResume = {
-      ...aiResponse,
-      userId: userId
-    } as any;
+    resume.summary = aiResponse.summary;
+    if (aiResponse.title) resume.title = aiResponse.title;
+    if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
+    const updatedResume = await resume.save();
 
-    const newResume = await Resume.create(newResumeData);
-
-    res.status(201).json({
+    res.json({
       success: true,
-      data: newResume
+      data: updatedResume
     });
 
   } catch (error: any) {
-    logger.error(`Generate resume from prompt error: ${error.message}`);
-    if (error.message.includes('AI Service') || error.message.includes('malformed')) {
-      return next(new AppError(`${error.message}`, 502));
+    console.error('Generate resume from prompt error:', error.message);
+    if (error.message.includes('AI Service')) {
+      return next(new AppError(`AI Service Error: ${error.message}`, 502));
     }
-    next(new AppError('Server error during resume generation', 500));
+    next(error);
   }
 };
 
@@ -137,15 +149,32 @@ export const updateResume = async (
   next: NextFunction
 ) => {
   try {
-    const resume = await Resume.findOneAndUpdate(
-      { _id: req.params.resumeId, userId: req.user?._id }, // Changed from id to resumeId
-      req.body,
-      { new: true, runValidators: true }
-    );
-
-    if (!resume) {
+    const existingResume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user?._id });
+    if (!existingResume) {
       throw new AppError('Resume not found', 404);
     }
+
+    // Save current content and themeConfig to history if there are changes
+    const contentChanged = Boolean(req.body.content && JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content));
+    const themeChanged = Boolean(req.body.themeConfig !== undefined && JSON.stringify(existingResume.themeConfig) !== JSON.stringify(req.body.themeConfig));
+
+    if (contentChanged || themeChanged) {
+      if (!existingResume.history) {
+        existingResume.history = [];
+      }
+      existingResume.history.push({
+        content: existingResume.content,
+        themeConfig: existingResume.themeConfig,
+        updatedAt: new Date()
+      });
+      // Keep only the last 20 revisions to prevent document from growing indefinitely
+      if (existingResume.history.length > 20) {
+        existingResume.history.shift();
+      }
+    }
+
+    Object.assign(existingResume, pickEditableFields(req.body));
+    const resume = await existingResume.save();
 
     res.json({
       success: true,
@@ -177,6 +206,252 @@ export const deleteResume = async (
     res.json({
       success: true,
       data: null
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Undo the last resume change
+// @route   POST /api/resumes/:resumeId/undo
+// @access  Private (Needs Auth Middleware)
+export const undoResume = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user?._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    if (!resume.history || resume.history.length === 0) {
+      throw new AppError('No history available to undo', 400);
+    }
+
+    // Pop the last history state
+    const lastState = resume.history.pop();
+    
+    // Restore the content and themeConfig
+    resume.content = lastState!.content;
+    if (lastState && 'themeConfig' in lastState) {
+      resume.themeConfig = lastState.themeConfig;
+    }
+
+    const updatedResume = await resume.save();
+
+    res.json({
+      success: true,
+      data: updatedResume
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get a publicly shared resume by its share token
+// @route   GET /api/resumes/share/:shareToken
+// @access  Public (Unauthenticated)
+export const getPublicResumeByToken = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { shareToken } = req.params;
+    if (!shareToken) {
+      throw new AppError('Share token is required', 400);
+    }
+
+    const resume = await Resume.findOne({
+      'sharing.shareToken': shareToken,
+      'sharing.isPublic': true
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found or share link is inactive or revoked', 404);
+    }
+
+    // Prepare public payload with privacy redaction
+    const resumeObj = resume.toObject ? resume.toObject() : JSON.parse(JSON.stringify(resume));
+    const rawContent = resumeObj.content || { basics: {}, sections: [], sectionOrder: [] };
+    const sanitizedContent = {
+      ...rawContent,
+      basics: {
+        ...(rawContent.basics || {})
+      }
+    };
+
+    const privacy = resume.sharing?.privacy || { hideEmail: false, hidePhone: false, hideAddress: false };
+
+    if (privacy.hideEmail) {
+      delete sanitizedContent.basics.email;
+    }
+    if (privacy.hidePhone) {
+      delete sanitizedContent.basics.phone;
+    }
+    if (privacy.hideAddress) {
+      if (sanitizedContent.basics.location) {
+        delete sanitizedContent.basics.location.address;
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        _id: resume._id,
+        title: resume.title,
+        summary: resume.summary,
+        templateId: resume.templateId,
+        themeConfig: resume.themeConfig,
+        content: sanitizedContent,
+        sharing: {
+          isPublic: true,
+          privacy: {
+            hideEmail: !!privacy.hideEmail,
+            hidePhone: !!privacy.hidePhone,
+            hideAddress: !!privacy.hideAddress
+          }
+        },
+        createdAt: resume.createdAt,
+        updatedAt: resume.updatedAt
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get sharing settings for a resume
+// @route   GET /api/resumes/:resumeId/share
+// @access  Private (Needs Auth Middleware)
+export const getShareSettings = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user?._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const sharing = resume.sharing || {
+      isPublic: false,
+      shareToken: null,
+      privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
+    };
+
+    res.json({
+      success: true,
+      data: sharing
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update sharing settings for a resume
+// @route   PATCH /api/resumes/:resumeId/share
+// @access  Private (Needs Auth Middleware)
+export const updateShareSettings = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user?._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    if (!resume.sharing) {
+      resume.sharing = {
+        isPublic: false,
+        shareToken: null,
+        privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
+      };
+    }
+
+    const { isPublic, privacy, regenerateToken } = req.body;
+
+    if (typeof isPublic === 'boolean') {
+      resume.sharing.isPublic = isPublic;
+      if (isPublic) {
+        // If enabling public sharing and no token exists or regenerate requested
+        if (!resume.sharing.shareToken || regenerateToken) {
+          resume.sharing.shareToken = crypto.randomBytes(16).toString('hex');
+        }
+      } else {
+        // When toggling off public sharing, revoke token
+        resume.sharing.shareToken = null;
+      }
+    } else if (regenerateToken) {
+      resume.sharing.shareToken = crypto.randomBytes(16).toString('hex');
+      resume.sharing.isPublic = true;
+    }
+
+    if (privacy) {
+      resume.sharing.privacy = {
+        hideEmail: typeof privacy.hideEmail === 'boolean' ? privacy.hideEmail : (resume.sharing.privacy?.hideEmail ?? false),
+        hidePhone: typeof privacy.hidePhone === 'boolean' ? privacy.hidePhone : (resume.sharing.privacy?.hidePhone ?? false),
+        hideAddress: typeof privacy.hideAddress === 'boolean' ? privacy.hideAddress : (resume.sharing.privacy?.hideAddress ?? false)
+      };
+    }
+
+    await resume.save();
+
+    res.json({
+      success: true,
+      data: resume.sharing
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+const MAX_JOB_DESCRIPTION_LENGTH = 20000;
+
+// @desc    Score a resume against a job description
+// @route   POST /api/resumes/:resumeId/job-match
+// @access  Private (Needs Auth Middleware)
+export const analyzeResumeJobMatch = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { jobDescription, jobTitle } = req.body || {};
+
+    if (typeof jobDescription !== 'string' || jobDescription.trim().length < 30) {
+      throw new AppError('Job description must be at least 30 characters', 400);
+    }
+    if (jobDescription.length > MAX_JOB_DESCRIPTION_LENGTH) {
+      throw new AppError(`Job description must be under ${MAX_JOB_DESCRIPTION_LENGTH} characters`, 400);
+    }
+    if (jobTitle !== undefined && typeof jobTitle !== 'string') {
+      throw new AppError('Job title must be a string', 400);
+    }
+
+    const resume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user?._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const resumeData = resume.toObject ? resume.toObject() : resume;
+    res.json({
+      success: true,
+      data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
     });
   } catch (error) {
     next(error);
