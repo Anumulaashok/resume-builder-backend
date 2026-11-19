@@ -6,6 +6,17 @@ import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
 import { analyzeJobMatch } from '../services/jobMatchService';
 import {
+  build30DayViewsSeries,
+  recordPublicResumeViewIfEligible,
+  validateCustomSlug
+} from '../utils/shareUtils';
+import {
+  MAX_HISTORY_SNAPSHOTS,
+  buildHistorySummaryList,
+  cloneSnapshotValue,
+  shouldCreateSnapshot
+} from '../utils/resumeHistory';
+import {
   buildSafeExportFilename,
   renderResumePlainText
 } from '../services/exportService';
@@ -158,22 +169,56 @@ export const updateResume = async (
       throw new AppError('Resume not found', 404);
     }
 
-    // Save current content and themeConfig to history if there are changes
-    const contentChanged = Boolean(req.body.content && JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content));
-    const themeChanged = Boolean(req.body.themeConfig !== undefined && JSON.stringify(existingResume.themeConfig) !== JSON.stringify(req.body.themeConfig));
+    // Save current content and themeConfig to history only when previous snapshot is >10 min old or content changed substantially
+    const summaryChanged = Boolean(
+      req.body.summary !== undefined &&
+      (existingResume.summary ?? '') !== (req.body.summary ?? '')
+    );
+    const contentChanged = Boolean(
+      (req.body.content &&
+        JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content)) ||
+      summaryChanged
+    );
+    const themeChanged = Boolean(
+      req.body.themeConfig !== undefined &&
+      JSON.stringify(existingResume.themeConfig) !== JSON.stringify(req.body.themeConfig)
+    );
 
-    if (contentChanged || themeChanged) {
+    const now = new Date();
+    const nextContent = req.body.content !== undefined ? req.body.content : existingResume.content;
+    const nextSummary = req.body.summary !== undefined ? req.body.summary : existingResume.summary;
+
+    if (
+      shouldCreateSnapshot({
+        history: existingResume.history,
+        prevContent: existingResume.content,
+        nextContent,
+        prevSummary: existingResume.summary,
+        nextSummary,
+        contentChanged,
+        themeChanged,
+        now
+      })
+    ) {
       if (!existingResume.history) {
         existingResume.history = [];
       }
       existingResume.history.push({
-        content: existingResume.content,
-        themeConfig: existingResume.themeConfig,
-        updatedAt: new Date()
+        title: existingResume.title,
+        ...(existingResume.summary !== undefined ? { summary: existingResume.summary } : {}),
+        content: cloneSnapshotValue(existingResume.content),
+        themeConfig: cloneSnapshotValue(existingResume.themeConfig),
+        updatedAt: now
       });
-      // Keep only the last 20 revisions to prevent document from growing indefinitely
-      if (existingResume.history.length > 20) {
-        existingResume.history.shift();
+      // Keep at most the last 30 snapshots
+      if (existingResume.history.length > MAX_HISTORY_SNAPSHOTS) {
+        existingResume.history.splice(
+          0,
+          existingResume.history.length - MAX_HISTORY_SNAPSHOTS
+        );
+      }
+      if (typeof (existingResume as any).markModified === 'function') {
+        existingResume.markModified('history');
       }
     }
 
@@ -254,6 +299,58 @@ export const undoResume = async (
   }
 };
 
+const formatPublicResumePayload = (resume: IResume | Record<string, any>) => {
+  const resumeObj =
+    typeof (resume as IResume).toObject === 'function'
+      ? (resume as IResume).toObject()
+      : JSON.parse(JSON.stringify(resume));
+  const rawContent = resumeObj.content || { basics: {}, sections: [], sectionOrder: [] };
+  const sanitizedContent = {
+    ...rawContent,
+    basics: {
+      ...(rawContent.basics || {})
+    }
+  };
+
+  const privacy = resume.sharing?.privacy || {
+    hideEmail: false,
+    hidePhone: false,
+    hideAddress: false
+  };
+
+  if (privacy.hideEmail) {
+    delete sanitizedContent.basics.email;
+  }
+  if (privacy.hidePhone) {
+    delete sanitizedContent.basics.phone;
+  }
+  if (privacy.hideAddress) {
+    if (sanitizedContent.basics.location) {
+      delete sanitizedContent.basics.location.address;
+    }
+  }
+
+  return {
+    _id: resume._id,
+    title: resume.title,
+    summary: resume.summary,
+    templateId: resume.templateId,
+    themeConfig: resume.themeConfig,
+    content: sanitizedContent,
+    sharing: {
+      isPublic: true,
+      ...(resume.sharing?.slug ? { slug: resume.sharing.slug } : {}),
+      privacy: {
+        hideEmail: !!privacy.hideEmail,
+        hidePhone: !!privacy.hidePhone,
+        hideAddress: !!privacy.hideAddress
+      }
+    },
+    createdAt: resume.createdAt,
+    updatedAt: resume.updatedAt
+  };
+};
+
 // @desc    Get a publicly shared resume by its share token
 // @route   GET /api/resumes/share/:shareToken
 // @access  Public (Unauthenticated)
@@ -277,50 +374,51 @@ export const getPublicResumeByToken = async (
       throw new AppError('Resume not found or share link is inactive or revoked', 404);
     }
 
-    // Prepare public payload with privacy redaction
-    const resumeObj = resume.toObject ? resume.toObject() : JSON.parse(JSON.stringify(resume));
-    const rawContent = resumeObj.content || { basics: {}, sections: [], sectionOrder: [] };
-    const sanitizedContent = {
-      ...rawContent,
-      basics: {
-        ...(rawContent.basics || {})
-      }
-    };
-
-    const privacy = resume.sharing?.privacy || { hideEmail: false, hidePhone: false, hideAddress: false };
-
-    if (privacy.hideEmail) {
-      delete sanitizedContent.basics.email;
-    }
-    if (privacy.hidePhone) {
-      delete sanitizedContent.basics.phone;
-    }
-    if (privacy.hideAddress) {
-      if (sanitizedContent.basics.location) {
-        delete sanitizedContent.basics.location.address;
-      }
-    }
+    await recordPublicResumeViewIfEligible(resume, req);
 
     res.json({
       success: true,
-      data: {
-        _id: resume._id,
-        title: resume.title,
-        summary: resume.summary,
-        templateId: resume.templateId,
-        themeConfig: resume.themeConfig,
-        content: sanitizedContent,
-        sharing: {
-          isPublic: true,
-          privacy: {
-            hideEmail: !!privacy.hideEmail,
-            hidePhone: !!privacy.hidePhone,
-            hideAddress: !!privacy.hideAddress
-          }
-        },
-        createdAt: resume.createdAt,
-        updatedAt: resume.updatedAt
-      }
+      data: formatPublicResumePayload(resume)
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get a publicly shared resume by its custom slug
+// @route   GET /api/public/r/:slug
+// @access  Public (Unauthenticated)
+export const getPublicResumeBySlug = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const rawSlug = req.params.slug;
+    if (!rawSlug || typeof rawSlug !== 'string') {
+      throw new AppError('Slug is required', 400);
+    }
+
+    const normalizedSlug = rawSlug.trim().toLowerCase();
+    const check = validateCustomSlug(normalizedSlug);
+    if (!check.valid) {
+      throw new AppError('Resume not found or share link is inactive or revoked', 404);
+    }
+
+    const resume = await Resume.findOne({
+      'sharing.slug': normalizedSlug,
+      'sharing.isPublic': true
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found or share link is inactive or revoked', 404);
+    }
+
+    await recordPublicResumeViewIfEligible(resume, req);
+
+    res.json({
+      success: true,
+      data: formatPublicResumePayload(resume)
     });
   } catch (error) {
     next(error);
@@ -348,6 +446,10 @@ export const getShareSettings = async (
     const sharing = resume.sharing || {
       isPublic: false,
       shareToken: null,
+      slug: null,
+      viewCount: 0,
+      lastViewedAt: null,
+      dailyViews: [],
       privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
     };
 
@@ -382,6 +484,9 @@ export const updateShareSettings = async (
       resume.sharing = {
         isPublic: false,
         shareToken: null,
+        viewCount: 0,
+        lastViewedAt: null,
+        dailyViews: [],
         privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
       };
     }
@@ -417,6 +522,194 @@ export const updateShareSettings = async (
     res.json({
       success: true,
       data: resume.sharing
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Check availability of a custom sharing slug for the owner's resume
+// @route   GET /api/resumes/:resumeId/sharing/slug/check
+// @access  Private (Needs Auth Middleware)
+export const checkSharingSlugAvailability = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const rawSlug = typeof req.query.slug === 'string' ? req.query.slug : '';
+    const check = validateCustomSlug(rawSlug);
+    if (!check.valid) {
+      return res.json({
+        success: true,
+        data: {
+          slug: rawSlug,
+          available: false,
+          reason: check.reason
+        }
+      });
+    }
+
+    const existing = await Resume.findOne({
+      'sharing.slug': rawSlug,
+      _id: { $ne: resume._id }
+    });
+
+    if (existing) {
+      return res.json({
+        success: true,
+        data: {
+          slug: rawSlug,
+          available: false,
+          reason: 'This custom URL slug is already taken'
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        slug: rawSlug,
+        available: true
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Set or clear a custom sharing slug for the owner's resume
+// @route   PATCH /api/resumes/:resumeId/sharing/slug
+// @access  Private (Needs Auth Middleware)
+export const updateSharingSlug = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    if (!resume.sharing) {
+      resume.sharing = {
+        isPublic: false,
+        shareToken: null,
+        viewCount: 0,
+        lastViewedAt: null,
+        dailyViews: [],
+        privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
+      };
+    }
+
+    const rawSlug = req.body?.slug;
+
+    if (rawSlug === null || rawSlug === '') {
+      resume.sharing.slug = undefined;
+    } else {
+      const check = validateCustomSlug(rawSlug);
+      if (!check.valid) {
+        throw new AppError(check.reason || 'Invalid custom slug', 400);
+      }
+
+      const existing = await Resume.findOne({
+        'sharing.slug': rawSlug,
+        _id: { $ne: resume._id }
+      });
+
+      if (existing) {
+        throw new AppError('This custom URL slug is already taken', 409);
+      }
+
+      resume.sharing.slug = rawSlug;
+    }
+
+    if (typeof resume.markModified === 'function') {
+      resume.markModified('sharing');
+    }
+
+    try {
+      await resume.save();
+    } catch (saveError: any) {
+      if (saveError?.code === 11000) {
+        throw new AppError('This custom URL slug is already taken', 409);
+      }
+      throw saveError;
+    }
+
+    const sharingData =
+      typeof (resume as any).toObject === 'function'
+        ? (resume as any).toObject().sharing
+        : resume.sharing;
+
+    res.json({
+      success: true,
+      data: {
+        ...sharingData,
+        slug: resume.sharing.slug ?? null
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get sharing view stats for the owner's resume
+// @route   GET /api/resumes/:resumeId/sharing/stats
+// @access  Private (Needs Auth Middleware)
+export const getSharingStats = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const sharing = resume.sharing;
+    const dailyViews = build30DayViewsSeries(sharing?.dailyViews);
+
+    res.json({
+      success: true,
+      data: {
+        viewCount: Number(sharing?.viewCount) || 0,
+        lastViewedAt: sharing?.lastViewedAt ?? null,
+        dailyViews,
+        isPublic: Boolean(sharing?.isPublic),
+        slug: sharing?.slug ?? null
+      }
     });
   } catch (error) {
     next(error);
@@ -495,6 +788,174 @@ export const exportResumeTxt = async (
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.status(200).send(txtBuffer);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    List version history summaries for a resume (newest first)
+// @route   GET /api/resumes/:resumeId/history
+// @access  Private (Needs Auth Middleware)
+export const getResumeHistory = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('Not authorized', 401);
+    }
+
+    const resumeId = req.params.resumeId || req.params.id;
+    const resume = await Resume.findOne({ _id: resumeId, userId: req.user._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const items = buildHistorySummaryList(resume.history, resume.title);
+    res.json({
+      success: true,
+      data: items
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get a single full snapshot from resume history by index
+// @route   GET /api/resumes/:resumeId/history/:index
+// @access  Private (Needs Auth Middleware)
+export const getResumeHistorySnapshot = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('Not authorized', 401);
+    }
+
+    const rawIndex = String(req.params.index ?? '');
+    if (!/^\d+$/.test(rawIndex)) {
+      throw new AppError('Invalid history index', 400);
+    }
+    const index = Number(rawIndex);
+
+    const resumeId = req.params.resumeId || req.params.id;
+    const resume = await Resume.findOne({ _id: resumeId, userId: req.user._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const history = resume.history || [];
+    if (index < 0 || index >= history.length) {
+      throw new AppError('History snapshot not found', 404);
+    }
+
+    const snapshotRaw = history[index] as any;
+    const snapshot = snapshotRaw?.toObject ? snapshotRaw.toObject() : snapshotRaw;
+
+    res.json({
+      success: true,
+      data: {
+        index,
+        title:
+          (typeof snapshot?.title === 'string' && snapshot.title.trim()) ||
+          resume.title ||
+          'Untitled Resume',
+        ...(snapshot?.summary !== undefined ? { summary: snapshot.summary } : {}),
+        content: snapshot?.content,
+        themeConfig: snapshot?.themeConfig,
+        updatedAt: snapshot?.updatedAt
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Snapshot current state first, then restore a resume history snapshot by index
+// @route   POST /api/resumes/:resumeId/history/:index/restore
+// @access  Private (Needs Auth Middleware)
+export const restoreResumeHistory = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('Not authorized', 401);
+    }
+
+    const rawIndex = String(req.params.index ?? '');
+    if (!/^\d+$/.test(rawIndex)) {
+      throw new AppError('Invalid history index', 400);
+    }
+    const index = Number(rawIndex);
+
+    const resumeId = req.params.resumeId || req.params.id;
+    const resume = await Resume.findOne({ _id: resumeId, userId: req.user._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const history = resume.history || [];
+    if (index < 0 || index >= history.length) {
+      throw new AppError('History snapshot not found', 404);
+    }
+
+    const rawTarget = history[index] as any;
+    const targetSnapshot = cloneSnapshotValue(
+      rawTarget?.toObject ? rawTarget.toObject() : rawTarget
+    );
+
+    if (!resume.history) {
+      resume.history = [];
+    }
+
+    // Snapshot current state first before restoring
+    resume.history.push({
+      title: resume.title,
+      ...(resume.summary !== undefined ? { summary: resume.summary } : {}),
+      content: cloneSnapshotValue(resume.content),
+      themeConfig: cloneSnapshotValue(resume.themeConfig),
+      updatedAt: new Date()
+    });
+
+    if (resume.history.length > MAX_HISTORY_SNAPSHOTS) {
+      resume.history.splice(0, resume.history.length - MAX_HISTORY_SNAPSHOTS);
+    }
+
+    const previousSnapshotIndex = resume.history.length - 1;
+
+    // Restore target snapshot fields
+    resume.content = targetSnapshot.content;
+    if ('themeConfig' in targetSnapshot) {
+      resume.themeConfig = targetSnapshot.themeConfig;
+    }
+    if (typeof targetSnapshot.title === 'string' && targetSnapshot.title.trim()) {
+      resume.title = targetSnapshot.title;
+    }
+    if (targetSnapshot.summary !== undefined) {
+      resume.summary = targetSnapshot.summary;
+    } else if (targetSnapshot.content?.basics?.summary !== undefined) {
+      resume.summary = targetSnapshot.content.basics.summary;
+    }
+
+    if (typeof (resume as any).markModified === 'function') {
+      resume.markModified('content');
+      resume.markModified('themeConfig');
+      resume.markModified('history');
+    }
+
+    const saved = await resume.save();
+    const updatedResume = saved && typeof saved === 'object' ? saved : resume;
+
+    res.json({
+      success: true,
+      data: updatedResume,
+      previousSnapshotIndex
+    });
   } catch (error) {
     next(error);
   }

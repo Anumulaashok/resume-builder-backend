@@ -34,9 +34,18 @@ export interface PrivacySettings {
   hideAddress: boolean;
 }
 
+export interface DailyView {
+  date: string;
+  count: number;
+}
+
 export interface ResumeSharing {
   isPublic: boolean;
   shareToken?: string | null;
+  slug?: string | null;
+  viewCount?: number;
+  lastViewedAt?: string | null;
+  dailyViews?: DailyView[];
   privacy: PrivacySettings;
 }
 

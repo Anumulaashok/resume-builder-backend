@@ -10,9 +10,11 @@ export const validate = (validations: ValidationChain[]) => {
       return next();
     }
 
+    const errorList = errors.array();
     return res.status(400).json({
       success: false,
-      errors: errors.array()
+      message: errorList[0]?.msg || 'Validation failed',
+      errors: errorList
     });
   };
 };

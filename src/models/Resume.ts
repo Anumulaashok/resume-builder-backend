@@ -6,9 +6,18 @@ export interface IPrivacySettings {
   hideAddress: boolean;
 }
 
+export interface IDailyView {
+  date: string;
+  count: number;
+}
+
 export interface ISharing {
   isPublic: boolean;
   shareToken?: string | null;
+  slug?: string | null;
+  viewCount?: number;
+  lastViewedAt?: Date | null;
+  dailyViews?: IDailyView[];
   privacy: IPrivacySettings;
 }
 
@@ -25,6 +34,7 @@ export interface IResume extends Document {
       label?: string;
       email: string;
       phone?: string;
+      summary?: string;
       location?: {
         address?: string;
         city?: string;
@@ -42,6 +52,8 @@ export interface IResume extends Document {
     sectionOrder: string[];
   };
   history?: Array<{
+    title?: string;
+    summary?: string;
     content: any;
     themeConfig?: any;
     updatedAt: Date;
@@ -59,6 +71,19 @@ const resumeSchema = new Schema({
   sharing: {
     isPublic: { type: Boolean, default: false },
     shareToken: { type: String, default: null, index: true },
+    slug: { type: String, trim: true, lowercase: true },
+    viewCount: { type: Number, default: 0 },
+    lastViewedAt: { type: Date, default: null },
+    dailyViews: {
+      type: [
+        {
+          _id: false,
+          date: { type: String, required: true },
+          count: { type: Number, required: true, default: 0 }
+        }
+      ],
+      default: []
+    },
     privacy: {
       hideEmail: { type: Boolean, default: false },
       hidePhone: { type: Boolean, default: false },
@@ -71,6 +96,7 @@ const resumeSchema = new Schema({
       label: String,
       email: { type: String, required: true },
       phone: String,
+      summary: String,
       location: {
         address: String,
         city: String,
@@ -88,10 +114,20 @@ const resumeSchema = new Schema({
     sectionOrder: [String]
   },
   history: [{
+    title: String,
+    summary: String,
     content: Schema.Types.Mixed,
     themeConfig: Schema.Types.Mixed,
     updatedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true });
+
+resumeSchema.index(
+  { 'sharing.slug': 1 },
+  {
+    unique: true,
+    partialFilterExpression: { 'sharing.slug': { $type: 'string' } }
+  }
+);
 
 export const Resume = mongoose.model<IResume>('Resume', resumeSchema);
