@@ -5,6 +5,7 @@ import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
 import { analyzeJobMatch } from '../services/jobMatchService';
+import { sanitizeDeep, validatePromptInput } from '../utils/sanitize';
 
 const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
 
@@ -94,7 +95,32 @@ export const getResumeById = async (
   }
 };
 
-// @desc    Generate resume content from prompt using AI
+const resolveSafeName = (...candidates: Array<unknown>): string => {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const cleaned = sanitizeDeep(candidate).trim();
+      if (cleaned && cleaned !== '[NAME]') {
+        return cleaned;
+      }
+    }
+  }
+  return 'Your Name';
+};
+
+const resolveSafeEmail = (...candidates: Array<unknown>): string => {
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const cleaned = sanitizeDeep(candidate).trim();
+      if (cleaned && cleaned !== '[EMAIL]' && cleaned.includes('@')) {
+        return cleaned;
+      }
+    }
+  }
+  return 'you@example.com';
+};
+
+// @desc    Generate resume content from prompt using AI (updates existing or creates new resume)
+// @route   POST /api/resumes/generate
 // @route   POST /api/resumes/:resumeId/generate
 // @access  Private (Needs Auth Middleware)
 export const generateResumeFromPrompt = async (
@@ -102,41 +128,231 @@ export const generateResumeFromPrompt = async (
   res: Response,
   next: NextFunction
 ) => {
-  const userId = req.user?._id;
-  const { prompt } = req.body;
-
-  if (!prompt) {
-    return next(new AppError('Missing required field (prompt)', 400));
-  }
-  if (!userId) {
-    return next(new AppError('Not authorized, user ID missing', 401));
-  }
-
   try {
-    const resume = await Resume.findOne({ _id: req.params.resumeId, userId });
-
-    if (!resume) {
-      return next(new AppError('Resume not found', 404));
+    const userId = req.user?._id;
+    if (!userId) {
+      return next(new AppError('Not authorized, user ID missing', 401));
     }
 
-    const aiResponse = await aiService.analyzeResumePrompt(prompt);
+    const validatedPrompt = validatePromptInput(req.body?.prompt, 'prompt');
 
-    resume.summary = aiResponse.summary;
-    if (aiResponse.title) resume.title = aiResponse.title;
-    if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
-    const updatedResume = await resume.save();
+    const paramResumeId = req.params.resumeId;
+    const bodyResumeId =
+      typeof req.body?.resumeId === 'string' && req.body.resumeId.trim()
+        ? req.body.resumeId.trim()
+        : undefined;
+    const targetResumeId = paramResumeId || bodyResumeId;
 
-    res.json({
-      success: true,
-      data: updatedResume
+    let resume: IResume | null = null;
+    if (targetResumeId) {
+      resume = await Resume.findOne({ _id: targetResumeId, userId });
+      if (!resume && paramResumeId) {
+        return next(new AppError('Resume not found', 404));
+      }
+    } else if (req.body?.createNew !== true) {
+      resume = await Resume.findOne({ userId });
+    }
+
+    const rawAiResponse = await aiService.analyzeResumePrompt(validatedPrompt);
+    const aiResponse = sanitizeDeep(rawAiResponse);
+
+    const aiBasics = aiResponse.content?.basics;
+    const existingBasics = resume?.content?.basics;
+    const bodyBasics =
+      req.body?.basics && typeof req.body.basics === 'object' ? req.body.basics : {};
+
+    const resolvedSummary = aiResponse.summary ?? '';
+    const resolvedTitle =
+      (typeof aiResponse.title === 'string' && aiResponse.title.trim()) ||
+      resume?.title ||
+      'AI Generated Resume';
+
+    const resolvedContent: IResume['content'] = {
+      basics: {
+        ...(existingBasics || {}),
+        ...(aiBasics || {}),
+        name: resolveSafeName(
+          aiBasics?.name,
+          existingBasics?.name,
+          bodyBasics.name,
+          (req.user as any)?.name
+        ),
+        email: resolveSafeEmail(
+          aiBasics?.email,
+          existingBasics?.email,
+          bodyBasics.email,
+          (req.user as any)?.email
+        ),
+        ...(aiBasics?.label || existingBasics?.label
+          ? { label: aiBasics?.label || existingBasics?.label }
+          : {}),
+        ...(aiBasics?.phone && aiBasics.phone !== '[PHONE]'
+          ? { phone: aiBasics.phone }
+          : existingBasics?.phone
+          ? { phone: existingBasics.phone }
+          : {})
+      },
+      sections: Array.isArray(aiResponse.content?.sections)
+        ? aiResponse.content!.sections
+        : resume?.content?.sections || [],
+      sectionOrder: Array.isArray(aiResponse.content?.sectionOrder)
+        ? aiResponse.content!.sectionOrder
+        : resume?.content?.sectionOrder || []
+    };
+
+    if (resume) {
+      if (resume.content) {
+        if (!resume.history) {
+          resume.history = [];
+        }
+        resume.history.push({
+          content: resume.content,
+          themeConfig: resume.themeConfig,
+          updatedAt: new Date()
+        });
+        if (resume.history.length > 20) {
+          resume.history.shift();
+        }
+      }
+
+      resume.title = resolvedTitle;
+      resume.summary = resolvedSummary;
+      resume.content = resolvedContent;
+      const updatedResume = await resume.save();
+
+      return res.status(200).json({
+        success: true,
+        data: updatedResume
+      });
+    }
+
+    const createdResume = await Resume.create({
+      userId,
+      title: resolvedTitle,
+      summary: resolvedSummary,
+      content: resolvedContent
     });
 
+    return res.status(201).json({
+      success: true,
+      data: createdResume
+    });
   } catch (error: any) {
-    console.error('Generate resume from prompt error:', error.message);
-    if (error.message.includes('AI Service')) {
-      return next(new AppError(`AI Service Error: ${error.message}`, 502));
+    if (error instanceof AppError) {
+      return next(error);
     }
-    next(error);
+    if (typeof error?.message === 'string' && error.message.includes('AI Service')) {
+      return next(
+        new AppError('AI service is temporarily unavailable. Please try again in a moment.', 502)
+      );
+    }
+    return next(error);
+  }
+};
+
+// @desc    Optimize a resume bullet point with AI
+// @route   POST /api/resumes/optimize-bullet
+// @route   POST /api/resumes/:resumeId/optimize-bullet
+// @access  Private (Needs Auth Middleware)
+export const optimizeResumeBullet = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return next(new AppError('Not authorized, user ID missing', 401));
+    }
+
+    if (req.params.resumeId) {
+      const existing = await Resume.findOne({ _id: req.params.resumeId, userId });
+      if (!existing) {
+        return next(new AppError('Resume not found', 404));
+      }
+    }
+
+    const bullet = validatePromptInput(req.body?.bullet, 'bullet');
+    const { role, company, targetRole, context } = req.body || {};
+
+    for (const [key, val] of Object.entries({ role, company, targetRole, context })) {
+      if (val !== undefined && typeof val !== 'string') {
+        return next(new AppError(`Field (${key}) must be a string`, 400));
+      }
+    }
+
+    const aiResult = await aiService.optimizeBulletPoints({
+      bullet,
+      role,
+      company,
+      targetRole,
+      context
+    });
+
+    const sanitized = sanitizeDeep(aiResult);
+
+    return res.status(200).json({
+      success: true,
+      data: sanitized
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// @desc    Generate professional summary suggestions with AI
+// @route   POST /api/resumes/generate-summary
+// @route   POST /api/resumes/:resumeId/generate-summary
+// @access  Private (Needs Auth Middleware)
+export const generateResumeSummary = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.user?._id;
+    if (!userId) {
+      return next(new AppError('Not authorized, user ID missing', 401));
+    }
+
+    let fallbackRole: string | undefined;
+    let fallbackSummary: string | undefined;
+    if (req.params.resumeId) {
+      const existing = await Resume.findOne({ _id: req.params.resumeId, userId });
+      if (!existing) {
+        return next(new AppError('Resume not found', 404));
+      }
+      fallbackRole = existing.content?.basics?.label || existing.title;
+      fallbackSummary = existing.summary;
+    }
+
+    const { prompt, targetRole, experienceContext, currentSummary } = req.body || {};
+    for (const [key, val] of Object.entries({
+      prompt,
+      targetRole,
+      experienceContext,
+      currentSummary
+    })) {
+      if (val !== undefined && typeof val !== 'string') {
+        return next(new AppError(`Field (${key}) must be a string`, 400));
+      }
+    }
+
+    const aiResult = await aiService.generateProfessionalSummary({
+      prompt,
+      targetRole: targetRole || fallbackRole,
+      experienceContext,
+      currentSummary: currentSummary ?? fallbackSummary
+    });
+
+    const sanitized = sanitizeDeep(aiResult);
+
+    return res.status(200).json({
+      success: true,
+      data: sanitized
+    });
+  } catch (error) {
+    return next(error);
   }
 };
 

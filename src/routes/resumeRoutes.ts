@@ -1,7 +1,7 @@
 import express from 'express';
 import { protect } from '../middleware/auth';
 import { validate, resumeValidation } from '../middleware/validate';
-import { publicShareLimiter } from '../middleware/rateLimiter';
+import { publicShareLimiter, aiGenerationLimiter } from '../middleware/rateLimiter';
 import {
   createResume,
   getResumes,
@@ -10,6 +10,8 @@ import {
   deleteResume,
   undoResume,
   generateResumeFromPrompt,
+  optimizeResumeBullet,
+  generateResumeSummary,
   analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
@@ -36,6 +38,11 @@ router.route('/')
   .get(getResumes)
   .post(validate(resumeValidation), asyncHandler(createResume));
 
+// Private AI generation & authoring routes (rate-limited to 10 req/min/user)
+router.post('/generate', aiGenerationLimiter, asyncHandler(generateResumeFromPrompt));
+router.post('/optimize-bullet', aiGenerationLimiter, asyncHandler(optimizeResumeBullet));
+router.post('/generate-summary', aiGenerationLimiter, asyncHandler(generateResumeSummary));
+
 // Share settings management for resume owner
 router.route('/:resumeId/share')
   .get(asyncHandler(getShareSettings))
@@ -49,7 +56,9 @@ router.route('/:resumeId')
   .delete(asyncHandler(deleteResume));
 
 router.post('/:resumeId/undo', asyncHandler(undoResume));
-router.post('/:resumeId/generate', asyncHandler(generateResumeFromPrompt));
+router.post('/:resumeId/generate', aiGenerationLimiter, asyncHandler(generateResumeFromPrompt));
+router.post('/:resumeId/optimize-bullet', aiGenerationLimiter, asyncHandler(optimizeResumeBullet));
+router.post('/:resumeId/generate-summary', aiGenerationLimiter, asyncHandler(generateResumeSummary));
 router.post('/:resumeId/job-match', asyncHandler(analyzeResumeJobMatch));
 
 export default router;
