@@ -9,9 +9,10 @@ export const apiLimiter = rateLimit({
 });
 
 export const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // Limit each IP to 5 login/signup requests per hour
-  message: 'Too many authentication attempts, please try again after an hour',
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many authentication attempts, please try again after 15 minutes' },
   standardHeaders: true,
   legacyHeaders: false,
 });
