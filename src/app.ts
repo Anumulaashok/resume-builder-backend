@@ -197,7 +197,7 @@ class App {
 
 // Initialize and start the application
 const appInstance = new App();
-if (process.env.NODE_ENV !== 'test' && !process.env.NETLIFY) {
+if (process.env.NODE_ENV !== 'test' && !process.env.NETLIFY && !process.env.VERCEL) {
     appInstance.start();
 }
 

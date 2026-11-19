@@ -19,7 +19,7 @@ const connectDB = async (): Promise<void> => {
 
     const conn = await mongoose.connect(mongoUri, {
       maxPoolSize: 10,
-      minPoolSize: 2,
+      minPoolSize: 0,
       socketTimeoutMS: 45000,
       connectTimeoutMS: 10000,
       retryWrites: true,
@@ -40,7 +40,7 @@ const connectDB = async (): Promise<void> => {
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error: any) {
     console.error(`Error: ${error.message}`);
-    process.exit(1);
+    throw error;
   }
 };
 
