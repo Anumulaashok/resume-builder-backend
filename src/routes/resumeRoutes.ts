@@ -21,7 +21,8 @@ import {
   updateShareSettings,
   checkSharingSlugAvailability,
   updateSharingSlug,
-  getSharingStats
+  getSharingStats,
+  exportResumeTxt
 } from '../controllers/resumeController';
 import { asyncHandler } from '../utils/asyncHandler';
 
@@ -66,6 +67,9 @@ router.patch(
   validate(sharingSlugValidation),
   asyncHandler(updateSharingSlug)
 );
+
+// Authenticated ATS plain-text resume export endpoint
+router.get('/:resumeId/export.txt', asyncHandler(exportResumeTxt));
 
 router.route('/:resumeId')
   .get(getResumeById)

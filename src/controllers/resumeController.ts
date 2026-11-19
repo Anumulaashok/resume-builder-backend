@@ -10,6 +10,10 @@ import {
   recordPublicResumeViewIfEligible,
   validateCustomSlug
 } from '../utils/shareUtils';
+import {
+  buildSafeExportFilename,
+  renderResumePlainText
+} from '../services/exportService';
 
 const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
 
@@ -706,6 +710,44 @@ export const analyzeResumeJobMatch = async (
       success: true,
       data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export a resume as an ATS-safe UTF-8 plain text file
+// @route   GET /api/resumes/:resumeId/export.txt
+// @access  Private (Needs Auth Middleware)
+export const exportResumeTxt = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const resumeData = resume.toObject ? resume.toObject() : resume;
+    const plainText = renderResumePlainText(resumeData);
+    const txtBuffer = Buffer.from(plainText, 'utf-8');
+    const filename = buildSafeExportFilename(resumeData);
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(txtBuffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.status(200).send(txtBuffer);
   } catch (error) {
     next(error);
   }
