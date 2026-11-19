@@ -94,7 +94,7 @@ export const getResumeById = async (
   }
 };
 
-// @desc    Generate resume summary from prompt using AI
+// @desc    Generate resume content from prompt using AI
 // @route   POST /api/resumes/:resumeId/generate
 // @access  Private (Needs Auth Middleware)
 export const generateResumeFromPrompt = async (
@@ -113,15 +113,17 @@ export const generateResumeFromPrompt = async (
   }
 
   try {
-    const aiResponse: { summary: string } = await aiService.analyzeResumePrompt(prompt);
-
     const resume = await Resume.findOne({ _id: req.params.resumeId, userId });
 
     if (!resume) {
       return next(new AppError('Resume not found', 404));
     }
 
+    const aiResponse = await aiService.analyzeResumePrompt(prompt);
+
     resume.summary = aiResponse.summary;
+    if (aiResponse.title) resume.title = aiResponse.title;
+    if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
     const updatedResume = await resume.save();
 
     res.json({
