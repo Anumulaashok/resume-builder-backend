@@ -1,10 +1,13 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import multer, { FileFilterCallback } from 'multer';
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../utils/appError';
 
-const uploadsDir = path.resolve(process.cwd(), 'uploads');
+// Serverless hosts only allow writes under the OS temp dir; files there are ephemeral.
+const isServerless = Boolean(process.env.VERCEL || process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+export const uploadsDir = isServerless ? path.join(os.tmpdir(), 'uploads') : path.resolve(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
