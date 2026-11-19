@@ -40,9 +40,22 @@ export function cloneSnapshotValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-function collectTextFragments(value: unknown, fragments: string[], parentKey?: string): void {
+function collectTextFragments(
+  value: unknown,
+  fragments: string[],
+  parentKey?: string,
+  seen: WeakSet<object> = new WeakSet()
+): void {
   if (value === null || value === undefined) {
     return;
+  }
+
+  // Guard against cyclic structures (e.g. Mongoose subdocument parent refs).
+  if (typeof value === 'object') {
+    if (seen.has(value as object)) {
+      return;
+    }
+    seen.add(value as object);
   }
 
   if (parentKey && IGNORED_TEXT_KEYS.has(parentKey)) {
@@ -66,7 +79,7 @@ function collectTextFragments(value: unknown, fragments: string[], parentKey?: s
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      collectTextFragments(item, fragments);
+      collectTextFragments(item, fragments, undefined, seen);
     }
     return;
   }
@@ -76,7 +89,7 @@ function collectTextFragments(value: unknown, fragments: string[], parentKey?: s
       if (IGNORED_TEXT_KEYS.has(key)) {
         continue;
       }
-      collectTextFragments(nested, fragments, key);
+      collectTextFragments(nested, fragments, key, seen);
     }
   }
 }
