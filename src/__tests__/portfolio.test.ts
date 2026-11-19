@@ -2,6 +2,9 @@ import request from 'supertest';
 import express, { Express, Request, Response, NextFunction } from 'express';
 import { Portfolio } from '../models/Portfolio';
 import portfolioRoutes from '../routes/portfolioRoutes';
+import { getPublicPortfolio } from '../controllers/portfolioController';
+import { publicPortfolioLimiter } from '../middleware/rateLimiter';
+import { asyncHandler } from '../utils/asyncHandler';
 import { errorHandler } from '../middleware/errorHandler';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
@@ -27,10 +30,40 @@ describe('Portfolio API', () => {
     app = express();
     app.use(express.json());
     app.use('/api/portfolios', portfolioRoutes);
+    app.get('/p/:slug', publicPortfolioLimiter, asyncHandler(getPublicPortfolio));
     app.use(errorHandler);
   });
 
-  describe('Unauthenticated Public Routes: GET /api/portfolios/public/:slug', () => {
+  describe('Unauthenticated Public Routes: GET /api/portfolios/public/:slug and GET /p/:slug', () => {
+    it('should return 200 and portfolio data when accessing vanity URL /p/:slug', async () => {
+      const mockPublishedPortfolio = {
+        _id: mockPortfolioId,
+        title: 'Ashok Portfolio',
+        slug: 'ashok-portfolio',
+        isPublished: true,
+        themeConfig: { theme: 'modern', primaryColor: '#3B82F6', layout: 'standard' },
+        basics: {
+          name: 'Ashok Anumula',
+          title: 'Full Stack Engineer',
+          email: 'ashok@example.com',
+          bio: 'Building awesome web apps'
+        },
+        sections: [],
+        sectionOrder: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+
+      jest.spyOn(Portfolio, 'findOne').mockResolvedValue(mockPublishedPortfolio as any);
+
+      const response = await request(app)
+        .get('/p/ashok-portfolio')
+        .expect(200);
+
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.slug).toBe('ashok-portfolio');
+      expect(response.body.data.title).toBe('Ashok Portfolio');
+    });
     it('should return 200 and portfolio data when portfolio exists and is published', async () => {
       const mockPublishedPortfolio = {
         _id: mockPortfolioId,
