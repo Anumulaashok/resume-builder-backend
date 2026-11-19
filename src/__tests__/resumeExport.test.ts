@@ -1,67 +1,20 @@
-import zlib from 'zlib';
 import jwt from 'jsonwebtoken';
 import request from 'supertest';
 import app from '../app';
 import { Resume } from '../models/Resume';
 import { User } from '../models/User';
 import {
-  A4_HEIGHT_PT,
-  A4_WIDTH_PT,
   buildSafeExportFilename,
+  formatDateWithPattern,
+  formatItemDateRange,
+  formatResumeDate,
   isBlockedHost,
-  renderResumePdf,
   renderResumePlainText,
   sanitizeSafeExternalUrl,
   sanitizeText,
 } from '../services/exportService';
 
-function extractDecompressedPdfText(pdfBuffer: Buffer): string {
-  const rawLatin1 = pdfBuffer.toString('latin1');
-  const decodedStreams: string[] = [rawLatin1];
-  const decodedTextRuns: string[] = [];
-  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = streamRegex.exec(rawLatin1)) !== null) {
-    const compressedBytes = Buffer.from(match[1], 'latin1');
-    try {
-      const inflated = zlib.inflateSync(compressedBytes).toString('latin1');
-      decodedStreams.push(inflated);
-
-      // Decode PDFKit hex-encoded vector glyph arrays: [<416c...> 15 <7820...>] TJ
-      const tjArrayRegex = /\[([^\]]+)\]\s*TJ/g;
-      let tjMatch: RegExpExecArray | null;
-      while ((tjMatch = tjArrayRegex.exec(inflated)) !== null) {
-        const hexParts = tjMatch[1].match(/<([0-9a-fA-F]+)>/g) || [];
-        const lineText = hexParts
-          .map((h) => Buffer.from(h.slice(1, -1), 'hex').toString('latin1'))
-          .join('');
-        if (lineText) {
-          decodedTextRuns.push(lineText);
-        }
-      }
-
-      // Decode single hex strings: <416c...> Tj
-      const singleHexTjRegex = /<([0-9a-fA-F]+)>\s*Tj/g;
-      let singleMatch: RegExpExecArray | null;
-      while ((singleMatch = singleHexTjRegex.exec(inflated)) !== null) {
-        decodedTextRuns.push(Buffer.from(singleMatch[1], 'hex').toString('latin1'));
-      }
-    } catch {
-      // Non-Flate stream or raw stream already included in rawLatin1
-    }
-  }
-
-  return `${decodedStreams.join('\n')}\n${decodedTextRuns.join('\n')}`;
-}
-
-function parseBinaryResponse(res: any, callback: (err: Error | null, body: Buffer) => void) {
-  const chunks: Buffer[] = [];
-  res.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-  res.on('end', () => callback(null, Buffer.concat(chunks)));
-}
-
-describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
+describe('ATS Plain Text Export Endpoint (GET /api/resumes/:resumeId/export.txt)', () => {
   const originalJwtSecret = process.env.JWT_SECRET;
   const TEST_SECRET = 'test-export-jwt-secret-key';
   const OWNER_ID = '507f1f77bcf86cd799439011';
@@ -95,13 +48,10 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
     userId: OWNER_ID,
     title: 'Staff Backend Engineer',
     summary: 'Fallback summary text.',
-    templateId: 'modern',
+    templateId: 'tech-split',
     themeConfig: {
       fontPairingId: 'modern-sans',
       primaryColor: '#2563eb',
-      headingColor: '#111827',
-      textColor: '#374151',
-      sectionSpacing: 'normal',
     },
     sharing: {
       isPublic: false,
@@ -178,7 +128,7 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
               endDate: '2025',
               url: 'https://github.com/anumulaashok/ats-parser',
               description: 'Deterministic resume extraction engine.',
-              technologies: ['TypeScript', 'PDFKit'],
+              technologies: ['TypeScript', 'Node.js'],
             },
           ],
         },
@@ -235,21 +185,15 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
     ...overrides,
   });
 
-  describe('Authentication & Authorization Guardrails', () => {
-    it('rejects unauthenticated PDF and plain text export requests with 401', async () => {
-      const pdfRes = await request(app).get('/api/resumes/507f1f77bcf86cd799439022/export/pdf');
-      expect(pdfRes.status).toBe(401);
-
-      const txtRes = await request(app).get('/api/resumes/507f1f77bcf86cd799439022/export/txt');
-      expect(txtRes.status).toBe(401);
-
-      const queryRes = await request(app).get('/api/resumes/507f1f77bcf86cd799439022/export?format=pdf');
-      expect(queryRes.status).toBe(401);
+  describe('Authentication, Ownership & Route Guardrails', () => {
+    it('rejects unauthenticated plain text export requests with 401', async () => {
+      const res = await request(app).get('/api/resumes/507f1f77bcf86cd799439022/export.txt');
+      expect(res.status).toBe(401);
     });
 
     it('rejects requests with an invalid JWT token with 401', async () => {
       const res = await request(app)
-        .get('/api/resumes/507f1f77bcf86cd799439022/export/pdf')
+        .get('/api/resumes/507f1f77bcf86cd799439022/export.txt')
         .set('Authorization', 'Bearer invalid.jwt.token');
 
       expect(res.status).toBe(401);
@@ -260,7 +204,7 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
       const findSpy = jest.spyOn(Resume, 'findOne').mockResolvedValue(null as any);
 
       const res = await request(app)
-        .get('/api/resumes/507f1f77bcf86cd799439099/export/pdf')
+        .get('/api/resumes/507f1f77bcf86cd799439099/export.txt')
         .set('Authorization', authHeader);
 
       expect(res.status).toBe(404);
@@ -270,128 +214,29 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
       });
     });
 
-    it('returns 400 when requesting an unsupported export format such as docx', async () => {
+    it('does not expose removed PDF or query export routes', async () => {
       const authHeader = issueAuthHeader();
 
-      const res = await request(app)
-        .get('/api/resumes/507f1f77bcf86cd799439022/export?format=docx')
+      const pdfRes = await request(app)
+        .get('/api/resumes/507f1f77bcf86cd799439022/export/pdf')
         .set('Authorization', authHeader);
+      expect(pdfRes.status).toBe(404);
 
-      expect(res.status).toBe(400);
-      expect(res.body.message).toMatch(/unsupported export format/i);
+      const dotPdfRes = await request(app)
+        .get('/api/resumes/507f1f77bcf86cd799439022/export.pdf')
+        .set('Authorization', authHeader);
+      expect(dotPdfRes.status).toBe(404);
     });
   });
 
-  describe('Vector PDF Export Endpoint & Layout Consistency', () => {
-    it('streams a valid A4 vector PDF within 3 seconds containing all active sections', async () => {
-      const authHeader = issueAuthHeader();
-      const resumeDoc = buildSampleResumeRecord();
-      jest.spyOn(Resume, 'findOne').mockResolvedValue(resumeDoc as any);
-
-      const startedAt = Date.now();
-      const res = await request(app)
-        .get(`/api/resumes/${resumeDoc._id}/export/pdf`)
-        .set('Authorization', authHeader)
-        .buffer(true)
-        .parse(parseBinaryResponse);
-      const elapsedMs = Date.now() - startedAt;
-
-      expect(res.status).toBe(200);
-      expect(elapsedMs).toBeLessThan(3000);
-      expect(res.headers['content-type']).toMatch(/application\/pdf/);
-      expect(res.headers['content-disposition']).toBe(
-        'attachment; filename="staff-backend-engineer.pdf"'
-      );
-      expect(res.headers['cache-control']).toBe('no-store');
-      expect(res.headers['x-content-type-options']).toBe('nosniff');
-
-      const pdfBuffer: Buffer = res.body;
-      expect(Buffer.isBuffer(pdfBuffer)).toBe(true);
-      expect(pdfBuffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
-
-      const rawPdf = pdfBuffer.toString('latin1');
-      expect(rawPdf).toContain(`/MediaBox [0 0 ${A4_WIDTH_PT} ${A4_HEIGHT_PT}]`);
-      expect(rawPdf).toContain('%%EOF');
-
-      const decompressed = extractDecompressedPdfText(pdfBuffer);
-      // Vector text stream operators
-      expect(decompressed).toContain('BT');
-      expect(decompressed).toContain('ET');
-      expect(decompressed).toContain('Anumula Ashok');
-      expect(decompressed).toContain('RagaAI');
-      expect(decompressed).toContain('Software Development Engineer');
-      expect(decompressed).toContain('Dec 2025 - Present');
-      expect(decompressed).toContain('National Institute of Technology');
-      expect(decompressed).toContain('Distributed ATS Parser');
-      expect(decompressed).toContain('Temporal');
-      expect(decompressed).toContain('Google Cloud Professional Architect');
-      expect(decompressed).toContain('OPEN SOURCE LEADERSHIP');
-      // Public links preserved as PDF URI annotations
-      expect(rawPdf).toContain('/URI (https://ashok.dev/)');
-      expect(rawPdf).toContain('/URI (https://github.com/anumulaashok/ats-parser)');
-    });
-
-    it('renders Professional template with classic-serif theme and paginates multi-page resumes without clipping', async () => {
-      const manyWorkItems = Array.from({ length: 18 }, (_, i) => ({
-        id: `work-${i + 1}`,
-        company: `Enterprise Systems Co ${i + 1}`,
-        position: `Principal Architect Role ${i + 1}`,
-        startDate: 'Jan 2020',
-        endDate: 'Dec 2024',
-        location: 'New York, NY',
-        description:
-          'Led multi-region distributed architecture migration with strict latency SLAs and zero downtime.',
-        highlights: [
-          `Delivered milestone ${i + 1}A improving throughput across clusters`,
-          `Mentored engineering squad ${i + 1}B on observability and incident response`,
-        ],
-        technologies: ['Go', 'Kubernetes', 'PostgreSQL'],
-      }));
-
-      const multiPageResume = buildSampleResumeRecord({
-        templateId: 'professional',
-        themeConfig: {
-          fontPairingId: 'classic-serif',
-          primaryColor: '#0f766e',
-          sectionSpacing: 'spacious',
-        },
-        content: {
-          ...buildSampleResumeRecord().content,
-          sections: [
-            {
-              id: 'sec-work',
-              type: 'WorkItem',
-              title: 'Work Experience',
-              content: manyWorkItems,
-            },
-          ],
-          sectionOrder: ['sec-work'],
-        },
-      });
-
-      const pdfBuffer = await renderResumePdf(multiPageResume);
-      const rawPdf = pdfBuffer.toString('latin1');
-      const pageMatches = rawPdf.match(/\/Type \/Page\b/g) || [];
-      expect(pageMatches.length).toBeGreaterThanOrEqual(2);
-      expect(rawPdf).toContain(`/MediaBox [0 0 ${A4_WIDTH_PT} ${A4_HEIGHT_PT}]`);
-
-      const decompressed = extractDecompressedPdfText(pdfBuffer);
-      expect(decompressed).toContain('PROFILE');
-      expect(decompressed).toContain('Enterprise Systems Co 1');
-      // Verify the final item on the last page was not clipped
-      expect(decompressed).toContain('Enterprise Systems Co 18');
-      expect(decompressed).toContain('Delivered milestone 18A');
-    });
-  });
-
-  describe('ATS Plain Text Export Endpoint', () => {
+  describe('ATS Plain Text Export Content, Section Ordering & Frontend Date Rules', () => {
     it('streams UTF-8 plain text with standardized ATS headings and all active sections', async () => {
       const authHeader = issueAuthHeader();
       const resumeDoc = buildSampleResumeRecord();
       jest.spyOn(Resume, 'findOne').mockResolvedValue(resumeDoc as any);
 
       const res = await request(app)
-        .get(`/api/resumes/${resumeDoc._id}/export/txt`)
+        .get(`/api/resumes/${resumeDoc._id}/export.txt`)
         .set('Authorization', authHeader);
 
       expect(res.status).toBe(200);
@@ -399,6 +244,8 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
       expect(res.headers['content-disposition']).toBe(
         'attachment; filename="staff-backend-engineer.txt"'
       );
+      expect(res.headers['cache-control']).toBe('no-store');
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
 
       const text = res.text;
       expect(text).toContain('Anumula Ashok');
@@ -421,10 +268,70 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
       expect(text).toContain('CERTIFICATIONS');
       expect(text).toContain('OPEN SOURCE LEADERSHIP');
     });
+
+    it('renders sections strictly in sectionOrder and appends active unreferenced sections', () => {
+      const base = buildSampleResumeRecord();
+      const reorderedResume = buildSampleResumeRecord({
+        content: {
+          ...base.content,
+          sectionOrder: ['sec-skills', 'sec-proj', 'sec-edu', 'sec-work'],
+        },
+      });
+
+      const text = renderResumePlainText(reorderedResume);
+      const skillsIdx = text.indexOf('SKILLS');
+      const projIdx = text.indexOf('PROJECTS');
+      const eduIdx = text.indexOf('EDUCATION');
+      const workIdx = text.indexOf('WORK EXPERIENCE');
+      const certIdx = text.indexOf('CERTIFICATIONS');
+      const customIdx = text.indexOf('OPEN SOURCE LEADERSHIP');
+
+      expect(skillsIdx).toBeGreaterThan(-1);
+      expect(projIdx).toBeGreaterThan(skillsIdx);
+      expect(eduIdx).toBeGreaterThan(projIdx);
+      expect(workIdx).toBeGreaterThan(eduIdx);
+      // Unreferenced active sections appended after sectionOrder in original order
+      expect(certIdx).toBeGreaterThan(workIdx);
+      expect(customIdx).toBeGreaterThan(certIdx);
+    });
+
+    it('formats dates via the exact same rules as the frontend (including themeConfig.dateFormat)', () => {
+      // Direct helper parity checks
+      expect(formatResumeDate({ month: 'September', year: 2023 })).toBe('September 2023');
+      expect(formatResumeDate(2024)).toBe('2024');
+      expect(formatResumeDate(new Date('2025-03-15T00:00:00.000Z'))).toBe('2025-03-15');
+
+      expect(formatDateWithPattern({ month: 'September', year: '2023' }, 'MMM YYYY')).toBe(
+        'Sep 2023'
+      );
+      expect(formatDateWithPattern('2023-09-01', 'MM/YYYY')).toBe('09/2023');
+      expect(formatDateWithPattern('06/2021', 'YYYY')).toBe('2021');
+      expect(formatDateWithPattern('Present', 'MM/YYYY')).toBe('Present');
+
+      expect(
+        formatItemDateRange(
+          { startDate: '2022-04', endDate: '2024-11', current: false },
+          'MMM YYYY'
+        )
+      ).toBe('Apr 2022 - Nov 2024');
+      expect(formatItemDateRange({ current: true })).toBe('Present');
+      expect(formatItemDateRange({ dateRange: 'Spring 2023' })).toBe('Spring 2023');
+      expect(formatItemDateRange({ period: 'Q1 2024 - Q3 2024' })).toBe('Q1 2024 - Q3 2024');
+
+      // End-to-end resume dateFormat via themeConfig
+      const formattedResume = buildSampleResumeRecord({
+        themeConfig: {
+          dateFormat: 'MM/YYYY',
+        },
+      });
+      const text = renderResumePlainText(formattedResume);
+      expect(text).toContain('12/2025 - Present | Bengaluru, IN');
+      expect(text).toContain('08/2018 - 05/2022');
+    });
   });
 
-  describe('Privacy Redaction, Hidden Sections/Items, Sanitization & SSRF Protection', () => {
-    it('omits hidden contact fields, disabled sections, disabled items, and internal metadata in both PDF and TXT', async () => {
+  describe('Privacy Redaction, Enabled-Only Filtering, Sanitization & SSRF Protection', () => {
+    it('omits hidden contact fields, disabled sections, disabled items, and internal metadata', () => {
       const privateResume = buildSampleResumeRecord({
         sharing: {
           isPublic: true,
@@ -502,29 +409,16 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
       expect(plainText).not.toContain('TOP_SECRET_TOKEN_DO_NOT_LEAK');
       expect(plainText).not.toContain('NEVER_EXPORT_HISTORY');
       expect(plainText).not.toContain(OWNER_ID);
-
-      const pdfBuffer = await renderResumePdf(privateResume);
-      const decompressedPdf = extractDecompressedPdfText(pdfBuffer);
-      expect(decompressedPdf).toContain('Priya Nair');
-      expect(decompressedPdf).toContain('Visible Security Corp');
-      expect(decompressedPdf).not.toContain('private-email@secret.org');
-      expect(decompressedPdf).not.toContain('+1-800-555-9999');
-      expect(decompressedPdf).not.toContain('99 Confidential Blvd');
-      expect(decompressedPdf).not.toContain('Stealth Hidden Employer');
-      expect(decompressedPdf).not.toContain('Secret Internal Award');
-      expect(decompressedPdf).not.toContain('TOP_SECRET_TOKEN_DO_NOT_LEAK');
-      expect(decompressedPdf).not.toContain('NEVER_EXPORT_HISTORY');
     });
 
-    it('sanitizes HTML/script payloads and blocks SSRF/unsafe URLs during export', async () => {
+    it('sanitizes HTML/script payloads and blocks SSRF/unsafe URLs during export', () => {
       expect(sanitizeText('<script>fetch("http://169.254.169.254")</script>Clean <b>Title</b>')).toBe(
         'Clean Title'
       );
-      expect(buildSafeExportFilename({ title: '../../Evil\r\nHeader<script>' }, 'pdf')).toBe(
-        'evil-header.pdf'
+      expect(buildSafeExportFilename({ title: '../../Evil\r\nHeader<script>' })).toBe(
+        'evil-header.txt'
       );
 
-      // SSRF & unsafe scheme checks
       expect(sanitizeSafeExternalUrl('http://169.254.169.254/latest/meta-data/')).toBe('');
       expect(sanitizeSafeExternalUrl('http://127.0.0.1:8080/internal')).toBe('');
       expect(sanitizeSafeExternalUrl('http://localhost:3000/secret')).toBe('');
@@ -579,15 +473,6 @@ describe('Server-Side Vector PDF & ATS Plain Text Export Pipeline', () => {
       expect(txt).not.toContain('10.24.0.8');
       expect(txt).not.toContain('javascript:');
       expect(txt).not.toContain('<script');
-
-      const pdfBuffer = await renderResumePdf(maliciousResume);
-      const decompressedPdf = extractDecompressedPdfText(pdfBuffer);
-      expect(decompressedPdf).toContain('Alex Mercer');
-      expect(decompressedPdf).toContain('Reduced p99 latency to <10ms across services.');
-      expect(decompressedPdf).not.toContain('169.254.169.254');
-      expect(decompressedPdf).not.toContain('127.0.0.1');
-      expect(decompressedPdf).not.toContain('10.24.0.8');
-      expect(decompressedPdf).not.toContain('javascript:');
     });
   });
 });
