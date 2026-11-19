@@ -166,3 +166,12 @@ export const reorderApplicationsValidation = [
     .custom((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)
     .withMessage('Each move must specify a non-negative numeric order')
 ];
+
+export const resumeIdParamValidation = [
+  param('resumeId').trim().notEmpty()
+];
+
+export const historyIndexValidation = [
+  param('resumeId').trim().notEmpty(),
+  param('index').isInt({ min: 0 })
+];

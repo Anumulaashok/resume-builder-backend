@@ -4,7 +4,9 @@ import {
   validate,
   resumeValidation,
   sharingSlugValidation,
-  sharingSlugQueryValidation
+  sharingSlugQueryValidation,
+  resumeIdParamValidation,
+  historyIndexValidation
 } from '../middleware/validate';
 import { publicShareLimiter } from '../middleware/rateLimiter';
 import {
@@ -14,6 +16,9 @@ import {
   updateResume,
   deleteResume,
   undoResume,
+  getResumeHistory,
+  getResumeHistorySnapshot,
+  restoreResumeHistory,
   generateResumeFromPrompt,
   analyzeResumeJobMatch,
   getPublicResumeByToken,
@@ -76,6 +81,10 @@ router.route('/:resumeId')
   .put(validate(resumeValidation), asyncHandler(updateResume))
   .patch(validate(resumeValidation), asyncHandler(updateResume))
   .delete(asyncHandler(deleteResume));
+
+router.get('/:resumeId/history', validate(resumeIdParamValidation), asyncHandler(getResumeHistory));
+router.get('/:resumeId/history/:index', validate(historyIndexValidation), asyncHandler(getResumeHistorySnapshot));
+router.post('/:resumeId/history/:index/restore', validate(historyIndexValidation), asyncHandler(restoreResumeHistory));
 
 router.post('/:resumeId/undo', asyncHandler(undoResume));
 router.post('/:resumeId/generate', asyncHandler(generateResumeFromPrompt));
