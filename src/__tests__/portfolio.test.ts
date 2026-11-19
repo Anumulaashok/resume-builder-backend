@@ -64,7 +64,6 @@ describe('Portfolio API', () => {
       expect(response.body.data.slug).toBe('ashok-portfolio');
       expect(response.body.data.title).toBe('Ashok Portfolio');
     });
-
     it('should return 200 and portfolio data when portfolio exists and is published', async () => {
       const mockPublishedPortfolio = {
         _id: mockPortfolioId,

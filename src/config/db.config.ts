@@ -37,12 +37,6 @@ const connectDB = async (): Promise<void> => {
       logger.warn('MongoDB disconnected');
     });
 
-    process.on('SIGINT', async () => {
-      await mongoose.connection.close();
-      logger.info('MongoDB connection closed due to app termination');
-      process.exit(0);
-    });
-
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error: any) {
     console.error(`Error: ${error.message}`);

@@ -1,7 +1,8 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  testMatch: ['**/__tests__/**/*.test.ts'],
+  testMatch: ['**/*.test.ts'],
+  testPathIgnorePatterns: ['/node_modules/', '/dist/', '/frontend/'],
   moduleFileExtensions: ['ts', 'js', 'json', 'node'],
   verbose: true
 };

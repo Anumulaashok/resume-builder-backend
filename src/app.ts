@@ -9,7 +9,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import swaggerUi from 'swagger-ui-express';
-import rateLimit from 'express-rate-limit';
+import mongoose from 'mongoose';
 
 // Local imports - configurations
 import { swaggerSpec } from './config/swagger';
@@ -108,19 +108,7 @@ class App {
         });
 
         // API Routes
-        this.app.use('/api/auth', 
-            rateLimit({
-                windowMs: 15 * 60 * 1000,
-                max: 100,
-                message: {
-                    status: 'error',
-                    message: 'Too many requests from this IP, please try again later.'
-                },
-                standardHeaders: true,
-                legacyHeaders: false
-            }), 
-            authRoutes
-        );
+        this.app.use('/api/auth', authRoutes);
         this.app.use('/api/resumes', resumeRoutes);
         this.app.use('/api/portfolios', portfolioRoutes);
 
@@ -166,8 +154,8 @@ class App {
     }
 
     private setupProcessHandlers(): void {
-        process.on('uncaughtException', this.handleUncaughtException);
-        process.on('unhandledRejection', this.handleUnhandledRejection);
+        process.on('uncaughtException', (err: Error) => this.handleUncaughtException(err));
+        process.on('unhandledRejection', (err: Error) => this.handleUnhandledRejection(err));
         process.on('SIGTERM', () => this.handleGracefulShutdown('SIGTERM'));
         process.on('SIGINT', () => this.handleGracefulShutdown('SIGINT'));
     }
@@ -182,6 +170,7 @@ class App {
                 this.server = null;
                 logger.info('Server shut down successfully');
             }
+            await mongoose.connection.close();
             process.exit(0);
         } catch (error) {
             logger.error(`Error during ${signal} shutdown:`, error);
@@ -213,3 +202,4 @@ if (process.env.NODE_ENV !== 'test' && !process.env.NETLIFY) {
 }
 
 export default appInstance.getApp();
+
