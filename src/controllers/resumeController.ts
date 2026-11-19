@@ -4,6 +4,16 @@ import { Resume, IResume } from '../models/Resume';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
+import { analyzeJobMatch } from '../services/jobMatchService';
+
+const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
+
+// Restrict client input to editable fields so ownership, sharing and history can't be overwritten.
+const pickEditableFields = (body: Record<string, unknown> = {}) =>
+  EDITABLE_RESUME_FIELDS.reduce<Record<string, unknown>>((acc, key) => {
+    if (body[key] !== undefined) acc[key] = body[key];
+    return acc;
+  }, {});
 
 // @desc    Create a new resume
 // @route   POST /api/resumes
@@ -22,12 +32,10 @@ export const createResume = async (
       throw new AppError('Missing resume data', 400);
     }
 
-    const newResume: IResume = {
-      ...req.body,
+    const resume = await Resume.create({
+      ...pickEditableFields(req.body),
       userId: req.user._id
-    };
-
-    const resume = await Resume.create(newResume);
+    });
 
     res.status(201).json({
       success: true,
@@ -87,7 +95,7 @@ export const getResumeById = async (
 };
 
 // @desc    Generate resume summary from prompt using AI
-// @route   POST /api/resumes/generate
+// @route   POST /api/resumes/:resumeId/generate
 // @access  Private (Needs Auth Middleware)
 export const generateResumeFromPrompt = async (
   req: AuthenticatedRequest,
@@ -107,15 +115,10 @@ export const generateResumeFromPrompt = async (
   try {
     const aiResponse: { summary: string } = await aiService.analyzeResumePrompt(prompt);
 
-    const resume = await Resume.findOne({ userId: userId });
+    const resume = await Resume.findOne({ _id: req.params.resumeId, userId });
 
     if (!resume) {
-      return next(
-        new AppError(
-          `No resume found for user ${userId}. Create one first via POST /api/resumes.`,
-          404
-        )
-      );
+      return next(new AppError('Resume not found', 404));
     }
 
     resume.summary = aiResponse.summary;
@@ -131,7 +134,7 @@ export const generateResumeFromPrompt = async (
     if (error.message.includes('AI Service')) {
       return next(new AppError(`AI Service Error: ${error.message}`, 502));
     }
-    next(new AppError('Server error during resume generation', 500));
+    next(error);
   }
 };
 
@@ -168,8 +171,7 @@ export const updateResume = async (
       }
     }
 
-    // Apply updates
-    Object.assign(existingResume, req.body);
+    Object.assign(existingResume, pickEditableFields(req.body));
     const resume = await existingResume.save();
 
     res.json({
@@ -415,3 +417,41 @@ export const updateShareSettings = async (
   }
 };
 
+
+const MAX_JOB_DESCRIPTION_LENGTH = 20000;
+
+// @desc    Score a resume against a job description
+// @route   POST /api/resumes/:resumeId/job-match
+// @access  Private (Needs Auth Middleware)
+export const analyzeResumeJobMatch = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { jobDescription, jobTitle } = req.body || {};
+
+    if (typeof jobDescription !== 'string' || jobDescription.trim().length < 30) {
+      throw new AppError('Job description must be at least 30 characters', 400);
+    }
+    if (jobDescription.length > MAX_JOB_DESCRIPTION_LENGTH) {
+      throw new AppError(`Job description must be under ${MAX_JOB_DESCRIPTION_LENGTH} characters`, 400);
+    }
+    if (jobTitle !== undefined && typeof jobTitle !== 'string') {
+      throw new AppError('Job title must be a string', 400);
+    }
+
+    const resume = await Resume.findOne({ _id: req.params.resumeId, userId: req.user?._id });
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const resumeData = resume.toObject ? resume.toObject() : resume;
+    res.json({
+      success: true,
+      data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
+    });
+  } catch (error) {
+    next(error);
+  }
+};

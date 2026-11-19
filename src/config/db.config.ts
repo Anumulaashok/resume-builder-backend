@@ -6,11 +6,15 @@ import logger from '../utils/logger';
 dotenv.config();
 
 const connectDB = async (): Promise<void> => {
+  if (mongoose.connection.readyState >= 1) {
+    return;
+  }
+
   try {
-    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    const mongoUri = process.env.MONGODB_URI || process.env.MONGO_URI;
     
     if (!mongoUri) {
-      throw new Error('MONGO_URI or MONGODB_URI is not defined in environment variables');
+      throw new Error('MONGODB_URI or MONGO_URI is not defined in environment variables');
     }
 
     const conn = await mongoose.connect(mongoUri, {
@@ -31,12 +35,6 @@ const connectDB = async (): Promise<void> => {
 
     mongoose.connection.on('disconnected', () => {
       logger.warn('MongoDB disconnected');
-    });
-
-    process.on('SIGINT', async () => {
-      await mongoose.connection.close();
-      logger.info('MongoDB connection closed due to app termination');
-      process.exit(0);
     });
 
     console.log(`MongoDB Connected: ${conn.connection.host}`);

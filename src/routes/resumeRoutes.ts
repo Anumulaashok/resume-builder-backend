@@ -9,6 +9,8 @@ import {
   updateResume,
   deleteResume,
   undoResume,
+  generateResumeFromPrompt,
+  analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
   updateShareSettings
@@ -47,5 +49,7 @@ router.route('/:resumeId')
   .delete(asyncHandler(deleteResume));
 
 router.post('/:resumeId/undo', asyncHandler(undoResume));
+router.post('/:resumeId/generate', asyncHandler(generateResumeFromPrompt));
+router.post('/:resumeId/job-match', asyncHandler(analyzeResumeJobMatch));
 
 export default router;
