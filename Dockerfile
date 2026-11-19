@@ -1,21 +1,38 @@
-FROM node:18-slim
+# Stage 1: builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files
+# Copy package manifests
 COPY package*.json ./
 
-# Install dependencies
+# Install all dependencies
 RUN npm install
 
-# Copy rest of the application code
+# Copy application source code
 COPY . .
 
-# Build TypeScript code
+# Compile TypeScript
 RUN npm run build
 
-# Expose the port
+# Stage 2: runner
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+# Copy package manifests
+COPY package*.json ./
+
+# Install production dependencies only
+RUN npm install --omit=dev
+
+# Copy compiled dist from builder
+COPY --from=builder /app/dist ./dist
+
+# Expose application port
 EXPOSE 10000
 
-# Start the application using compiled JavaScript
+# Start the service
 CMD ["node", "dist/app.js"]
