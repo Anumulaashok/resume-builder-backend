@@ -30,21 +30,5 @@ services:
       mongo:
         condition: service_healthy
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    ports:
-      - "3000:3000"
-    environment:
-      - PORT=3000
-      - BACKEND_URL=http://backend:10000
-      - NODE_ENV=production
-    depends_on:
-      - backend
-    links:
-      - backend
-
 volumes:
   mongo_data:
