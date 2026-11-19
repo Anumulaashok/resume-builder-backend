@@ -1,4 +1,4 @@
-import { body } from 'express-validator';
+import { body, param } from 'express-validator';
 
 export const loginValidation = [
   body('email').isEmail().normalizeEmail(),
@@ -18,4 +18,13 @@ export const resumeValidation = [
   body('content.basics.email').isEmail(),
   body('content.sections').isArray(),
   body('content.sectionOrder').isArray()
+];
+
+export const resumeIdParamValidation = [
+  param('resumeId').trim().notEmpty()
+];
+
+export const historyIndexValidation = [
+  param('resumeId').trim().notEmpty(),
+  param('index').isInt({ min: 0 })
 ];

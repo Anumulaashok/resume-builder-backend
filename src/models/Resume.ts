@@ -25,6 +25,7 @@ export interface IResume extends Document {
       label?: string;
       email: string;
       phone?: string;
+      summary?: string;
       location?: {
         address?: string;
         city?: string;
@@ -42,6 +43,8 @@ export interface IResume extends Document {
     sectionOrder: string[];
   };
   history?: Array<{
+    title?: string;
+    summary?: string;
     content: any;
     themeConfig?: any;
     updatedAt: Date;
@@ -71,6 +74,7 @@ const resumeSchema = new Schema({
       label: String,
       email: { type: String, required: true },
       phone: String,
+      summary: String,
       location: {
         address: String,
         city: String,
@@ -88,6 +92,8 @@ const resumeSchema = new Schema({
     sectionOrder: [String]
   },
   history: [{
+    title: String,
+    summary: String,
     content: Schema.Types.Mixed,
     themeConfig: Schema.Types.Mixed,
     updatedAt: { type: Date, default: Date.now }
