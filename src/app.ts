@@ -99,7 +99,8 @@ class App {
         this.app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
         this.app.use(cors(this.getCorsOptions()));
         this.app.use(morgan('dev'));
-        this.app.use(express.json());
+        // Raised from the 100kb default so resumes with an embedded profile photo can be saved.
+        this.app.use(express.json({ limit: '1mb' }));
         this.app.use(requestLogger);
         this.app.use(apiLimiter);
         this.app.use('/uploads', express.static(uploadsDir));

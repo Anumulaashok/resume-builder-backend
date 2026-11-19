@@ -191,7 +191,7 @@ export const updateResume = async (
     if (
       shouldCreateSnapshot({
         history: existingResume.history,
-        prevContent: existingResume.content,
+        prevContent: cloneSnapshotValue(existingResume.content),
         nextContent,
         prevSummary: existingResume.summary,
         nextSummary,
