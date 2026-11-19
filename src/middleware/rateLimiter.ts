@@ -1,4 +1,25 @@
 import rateLimit from 'express-rate-limit';
+import { Request } from 'express';
+
+export const createAiGenerationLimiter = (maxRequests = 10, windowMs = 60 * 1000) =>
+  rateLimit({
+    windowMs,
+    max: maxRequests,
+    keyGenerator: (req: Request) => {
+      const user = (req as any).user;
+      const userId = user?._id?.toString() || user?.id?.toString();
+      return userId || req.ip || 'anonymous';
+    },
+    message: {
+      success: false,
+      status: 'fail',
+      message: 'AI generation rate limit exceeded (maximum 10 requests per minute). Please wait a moment and try again.',
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+export const aiGenerationLimiter = createAiGenerationLimiter(10, 60 * 1000);
 
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
