@@ -6,9 +6,18 @@ export interface IPrivacySettings {
   hideAddress: boolean;
 }
 
+export interface IDailyView {
+  date: string;
+  count: number;
+}
+
 export interface ISharing {
   isPublic: boolean;
   shareToken?: string | null;
+  slug?: string | null;
+  viewCount?: number;
+  lastViewedAt?: Date | null;
+  dailyViews?: IDailyView[];
   privacy: IPrivacySettings;
 }
 
@@ -59,6 +68,19 @@ const resumeSchema = new Schema({
   sharing: {
     isPublic: { type: Boolean, default: false },
     shareToken: { type: String, default: null, index: true },
+    slug: { type: String, trim: true, lowercase: true },
+    viewCount: { type: Number, default: 0 },
+    lastViewedAt: { type: Date, default: null },
+    dailyViews: {
+      type: [
+        {
+          _id: false,
+          date: { type: String, required: true },
+          count: { type: Number, required: true, default: 0 }
+        }
+      ],
+      default: []
+    },
     privacy: {
       hideEmail: { type: Boolean, default: false },
       hidePhone: { type: Boolean, default: false },
@@ -93,5 +115,13 @@ const resumeSchema = new Schema({
     updatedAt: { type: Date, default: Date.now }
   }]
 }, { timestamps: true });
+
+resumeSchema.index(
+  { 'sharing.slug': 1 },
+  {
+    unique: true,
+    partialFilterExpression: { 'sharing.slug': { $type: 'string' } }
+  }
+);
 
 export const Resume = mongoose.model<IResume>('Resume', resumeSchema);

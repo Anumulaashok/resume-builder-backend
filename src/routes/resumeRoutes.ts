@@ -1,6 +1,11 @@
 import express from 'express';
 import { protect } from '../middleware/auth';
-import { validate, resumeValidation } from '../middleware/validate';
+import {
+  validate,
+  resumeValidation,
+  sharingSlugValidation,
+  sharingSlugQueryValidation
+} from '../middleware/validate';
 import { publicShareLimiter } from '../middleware/rateLimiter';
 import {
   createResume,
@@ -13,7 +18,10 @@ import {
   analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
-  updateShareSettings
+  updateShareSettings,
+  checkSharingSlugAvailability,
+  updateSharingSlug,
+  getSharingStats
 } from '../controllers/resumeController';
 import { asyncHandler } from '../utils/asyncHandler';
 
@@ -36,11 +44,28 @@ router.route('/')
   .get(getResumes)
   .post(validate(resumeValidation), asyncHandler(createResume));
 
-// Share settings management for resume owner
+// Share settings, custom slug & view stats management for resume owner
 router.route('/:resumeId/share')
   .get(asyncHandler(getShareSettings))
   .patch(asyncHandler(updateShareSettings))
   .put(asyncHandler(updateShareSettings));
+
+router.get(
+  '/:resumeId/sharing/stats',
+  asyncHandler(getSharingStats)
+);
+
+router.get(
+  '/:resumeId/sharing/slug/check',
+  validate(sharingSlugQueryValidation),
+  asyncHandler(checkSharingSlugAvailability)
+);
+
+router.patch(
+  '/:resumeId/sharing/slug',
+  validate(sharingSlugValidation),
+  asyncHandler(updateSharingSlug)
+);
 
 router.route('/:resumeId')
   .get(getResumeById)
