@@ -1,6 +1,5 @@
 // Core/Node modules
 import { Server } from 'http';
-import path from 'path';
 import dotenv from 'dotenv';
 
 // Third-party modules
@@ -25,6 +24,7 @@ import { getPublicPortfolio } from './controllers/portfolioController';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import { apiLimiter, publicPortfolioLimiter } from './middleware/rateLimiter';
 import { requestLogger } from './middleware/requestLogger';
+import { uploadsDir } from './middleware/upload';
 
 // Local imports - utils
 import logger from './utils/logger';
@@ -98,7 +98,7 @@ class App {
         this.app.use(express.json());
         this.app.use(requestLogger);
         this.app.use(apiLimiter);
-        this.app.use('/uploads', express.static(path.resolve(process.cwd(), 'uploads')));
+        this.app.use('/uploads', express.static(uploadsDir));
     }
 
     private configureRoutes(): void {
