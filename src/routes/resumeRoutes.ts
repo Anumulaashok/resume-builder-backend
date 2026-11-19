@@ -13,7 +13,10 @@ import {
   analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
-  updateShareSettings
+  updateShareSettings,
+  exportResume,
+  exportResumePdf,
+  exportResumeTxt
 } from '../controllers/resumeController';
 import { asyncHandler } from '../utils/asyncHandler';
 
@@ -41,6 +44,11 @@ router.route('/:resumeId/share')
   .get(asyncHandler(getShareSettings))
   .patch(asyncHandler(updateShareSettings))
   .put(asyncHandler(updateShareSettings));
+
+// Authenticated server-side resume export endpoints (vector PDF & ATS plain text)
+router.get('/:resumeId/export/pdf', asyncHandler(exportResumePdf));
+router.get('/:resumeId/export/txt', asyncHandler(exportResumeTxt));
+router.get('/:resumeId/export', asyncHandler(exportResume));
 
 router.route('/:resumeId')
   .get(getResumeById)

@@ -1,10 +1,16 @@
 import { Request, Response, NextFunction } from 'express';
+import { Readable } from 'stream';
 import crypto from 'crypto';
 import { Resume, IResume } from '../models/Resume';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
 import { analyzeJobMatch } from '../services/jobMatchService';
+import {
+  buildSafeExportFilename,
+  renderResumePdf,
+  renderResumePlainText
+} from '../services/exportService';
 
 const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
 
@@ -456,4 +462,103 @@ export const analyzeResumeJobMatch = async (
   } catch (error) {
     next(error);
   }
+};
+
+// @desc    Export a resume as a server-rendered A4 vector PDF
+// @route   GET /api/resumes/:resumeId/export/pdf
+// @access  Private (Needs Auth Middleware)
+export const exportResumePdf = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const resumeData = resume.toObject ? resume.toObject() : resume;
+    const pdfBuffer = await renderResumePdf(resumeData);
+    const filename = buildSafeExportFilename(resumeData, 'pdf');
+
+    res.status(200);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(pdfBuffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    Readable.from(pdfBuffer).pipe(res);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export a resume as an ATS-safe UTF-8 plain text file
+// @route   GET /api/resumes/:resumeId/export/txt
+// @access  Private (Needs Auth Middleware)
+export const exportResumeTxt = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const resume = await Resume.findOne({
+      _id: req.params.resumeId,
+      userId: req.user._id
+    });
+
+    if (!resume) {
+      throw new AppError('Resume not found', 404);
+    }
+
+    const resumeData = resume.toObject ? resume.toObject() : resume;
+    const plainText = renderResumePlainText(resumeData);
+    const txtBuffer = Buffer.from(plainText, 'utf-8');
+    const filename = buildSafeExportFilename(resumeData, 'txt');
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(txtBuffer.length));
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    Readable.from(txtBuffer).pipe(res);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export a resume by query format (?format=pdf|txt)
+// @route   GET /api/resumes/:resumeId/export
+// @access  Private (Needs Auth Middleware)
+export const exportResume = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  const format = String(req.query.format || 'pdf').trim().toLowerCase();
+  if (format === 'pdf') {
+    return exportResumePdf(req, res, next);
+  }
+  if (format === 'txt' || format === 'text') {
+    return exportResumeTxt(req, res, next);
+  }
+  return next(
+    new AppError('Unsupported export format. Supported formats are pdf and txt.', 400)
+  );
 };
