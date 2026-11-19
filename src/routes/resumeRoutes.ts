@@ -9,6 +9,7 @@ import {
   updateResume,
   deleteResume,
   undoResume,
+  generateResumeFromPrompt,
   getPublicResumeByToken,
   getShareSettings,
   updateShareSettings
@@ -47,5 +48,6 @@ router.route('/:resumeId')
   .delete(asyncHandler(deleteResume));
 
 router.post('/:resumeId/undo', asyncHandler(undoResume));
+router.post('/:resumeId/generate', asyncHandler(generateResumeFromPrompt));
 
 export default router;

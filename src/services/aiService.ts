@@ -9,7 +9,7 @@ export const analyzeResumePrompt = async (prompt: string): Promise<AIResponse> =
     // TODO: Implement actual AI service integration
     // This is a mock implementation
     const mockResponse: AIResponse = {
-      summary: `Generated summary based on: ${prompt}`
+      summary: `[AI placeholder] Generated summary based on: ${prompt}`
     };
     
     return mockResponse;
