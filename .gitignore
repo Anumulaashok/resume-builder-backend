@@ -88,3 +88,6 @@ typings/
 dist/
 # npm package lock file
 package-lock.json
+.vercel
+.env*
+
