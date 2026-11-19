@@ -18,6 +18,7 @@ import { connectDB } from './config/db.config';
 import authRoutes from './routes/authRoutes';
 import resumeRoutes from './routes/resumeRoutes';
 import portfolioRoutes from './routes/portfolioRoutes';
+import applicationRoutes from './routes/applicationRoutes';
 import { getPublicPortfolio } from './controllers/portfolioController';
 
 // Local imports - middleware
@@ -111,6 +112,7 @@ class App {
         this.app.use('/api/auth', authRoutes);
         this.app.use('/api/resumes', resumeRoutes);
         this.app.use('/api/portfolios', portfolioRoutes);
+        this.app.use('/api/applications', applicationRoutes);
 
         // Direct public vanity slug route for published portfolios
         this.app.get('/p/:slug', publicPortfolioLimiter, asyncHandler(getPublicPortfolio));
