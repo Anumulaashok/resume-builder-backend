@@ -21,7 +21,8 @@ import {
   analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
-  updateShareSettings
+  updateShareSettings,
+  exportResumeTxt
 } from '../controllers/resumeController';
 import { asyncHandler } from '../utils/asyncHandler';
 
@@ -49,6 +50,9 @@ router.route('/:resumeId/share')
   .get(asyncHandler(getShareSettings))
   .patch(asyncHandler(updateShareSettings))
   .put(asyncHandler(updateShareSettings));
+
+// Authenticated ATS plain-text resume export endpoint
+router.get('/:resumeId/export.txt', asyncHandler(exportResumeTxt));
 
 router.route('/:resumeId')
   .get(getResumeById)
