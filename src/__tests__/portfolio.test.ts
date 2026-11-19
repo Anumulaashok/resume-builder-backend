@@ -1,13 +1,21 @@
+import fs from 'fs';
+import path from 'path';
 import request from 'supertest';
 import express, { Express, Request, Response, NextFunction } from 'express';
+import { put } from '@vercel/blob';
 import { Portfolio } from '../models/Portfolio';
 import portfolioRoutes from '../routes/portfolioRoutes';
 import { getPublicPortfolio } from '../controllers/portfolioController';
 import { publicPortfolioLimiter } from '../middleware/rateLimiter';
+import { uploadsDir } from '../middleware/upload';
 import { asyncHandler } from '../utils/asyncHandler';
 import { errorHandler } from '../middleware/errorHandler';
 import jwt from 'jsonwebtoken';
 import mongoose from 'mongoose';
+
+jest.mock('@vercel/blob', () => ({
+  put: jest.fn()
+}));
 
 // Mock auth middleware to easily simulate authenticated users in tests
 jest.mock('../middleware/auth', () => ({
@@ -119,6 +127,32 @@ describe('Portfolio API', () => {
   });
 
   describe('Media Upload: POST /api/portfolios/upload', () => {
+    const originalBlobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    const createdDiskFiles: string[] = [];
+    const pngBuffer = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    );
+
+    beforeEach(() => {
+      delete process.env.BLOB_READ_WRITE_TOKEN;
+    });
+
+    afterEach(() => {
+      if (originalBlobToken === undefined) {
+        delete process.env.BLOB_READ_WRITE_TOKEN;
+      } else {
+        process.env.BLOB_READ_WRITE_TOKEN = originalBlobToken;
+      }
+
+      while (createdDiskFiles.length > 0) {
+        const filePath = createdDiskFiles.pop()!;
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+        }
+      }
+    });
+
     it('should reject unsupported media types (e.g. text/plain or application/pdf)', async () => {
       const response = await request(app)
         .post('/api/portfolios/upload')
@@ -126,23 +160,80 @@ describe('Portfolio API', () => {
         .expect(400);
 
       expect(response.body.message).toMatch(/only jpeg, png, and webp/i);
+      expect(put).not.toHaveBeenCalled();
     });
 
-    it('should accept supported image types (JPEG, PNG, WebP)', async () => {
-      // Small 1x1 valid PNG buffer
-      const pngBuffer = Buffer.from(
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-        'base64'
-      );
+    it('should accept supported image types (JPEG, PNG, WebP) and return /uploads path when BLOB_READ_WRITE_TOKEN is not set', async () => {
+      const response = await request(app)
+        .post('/api/portfolios/upload')
+        .attach('file', pngBuffer, 'test-image.png')
+        .expect(201);
+
+      createdDiskFiles.push(path.join(uploadsDir, response.body.filename));
+
+      expect(put).not.toHaveBeenCalled();
+      expect(response.body.success).toBe(true);
+      expect(response.body.url).toMatch(/^\/uploads\/portfolio-.*\.png$/);
+      expect(response.body.filename).toMatch(/^portfolio-.*\.png$/);
+      expect(response.body.mimetype).toBe('image/png');
+      expect(response.body.size).toBe(pngBuffer.length);
+      expect(fs.existsSync(path.join(uploadsDir, response.body.filename))).toBe(true);
+    });
+
+    it('should upload buffer via @vercel/blob put() and return the public blob URL when BLOB_READ_WRITE_TOKEN is set', async () => {
+      process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_test_token';
+      const mockedBlobUrl = 'https://test-store.public.blob.vercel-storage.com/portfolio-12345.png';
+      (put as jest.Mock).mockResolvedValue({
+        url: mockedBlobUrl,
+        downloadUrl: `${mockedBlobUrl}?download=1`,
+        pathname: 'portfolio-12345.png',
+        contentType: 'image/png',
+        contentDisposition: 'inline; filename="portfolio-12345.png"'
+      });
 
       const response = await request(app)
         .post('/api/portfolios/upload')
         .attach('file', pngBuffer, 'test-image.png')
         .expect(201);
 
-      expect(response.body.success).toBe(true);
-      expect(response.body.url).toMatch(/^\/uploads\/portfolio-/);
-      expect(response.body.filename).toBeDefined();
+      expect(put).toHaveBeenCalledTimes(1);
+      const [calledPathname, calledBuffer, calledOptions] = (put as jest.Mock).mock.calls[0];
+      expect(calledPathname).toMatch(/^portfolio-.*\.png$/);
+      expect(Buffer.isBuffer(calledBuffer)).toBe(true);
+      expect((calledBuffer as Buffer).equals(pngBuffer)).toBe(true);
+      expect(calledOptions).toEqual({
+        access: 'public',
+        contentType: 'image/png',
+        token: 'vercel_blob_rw_test_token'
+      });
+
+      expect(response.body).toEqual({
+        success: true,
+        url: mockedBlobUrl,
+        filename: calledPathname,
+        mimetype: 'image/png',
+        size: pngBuffer.length
+      });
+      expect(fs.existsSync(path.join(uploadsDir, response.body.filename))).toBe(false);
+    });
+
+    it('should enforce file type and 5MB size validation when BLOB_READ_WRITE_TOKEN is set without calling put()', async () => {
+      process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_test_token';
+
+      const invalidTypeRes = await request(app)
+        .post('/api/portfolios/upload')
+        .attach('file', Buffer.from('plain text content'), 'document.txt')
+        .expect(400);
+      expect(invalidTypeRes.body.message).toMatch(/only jpeg, png, and webp/i);
+
+      const oversizedBuffer = Buffer.alloc(5 * 1024 * 1024 + 10 * 1024);
+      const oversizedRes = await request(app)
+        .post('/api/portfolios/upload')
+        .attach('file', oversizedBuffer, 'oversized.png')
+        .expect(400);
+      expect(oversizedRes.body.message).toMatch(/too large|5mb/i);
+
+      expect(put).not.toHaveBeenCalled();
     });
 
     it('should reject files exceeding the 5MB size limit', async () => {
@@ -155,6 +246,7 @@ describe('Portfolio API', () => {
         .expect(400);
 
       expect(response.body.message).toMatch(/too large|5mb/i);
+      expect(put).not.toHaveBeenCalled();
     });
   });
 

@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
+import { put } from '@vercel/blob';
 import { Portfolio, IPortfolio } from '../models/Portfolio';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
+import { generatePortfolioFilename, isBlobStorageEnabled } from '../middleware/upload';
 
 const cleanSlug = (input: string): string => {
   return input
@@ -319,12 +321,27 @@ export const uploadPortfolioMedia = async (
       throw new AppError('No image file uploaded', 400);
     }
 
-    const fileUrl = `/uploads/${file.filename}`;
+    const filename = file.filename || generatePortfolioFilename(file.originalname);
+    let fileUrl: string;
+
+    if (isBlobStorageEnabled()) {
+      if (!file.buffer) {
+        throw new AppError('Uploaded file buffer is missing', 400);
+      }
+      const blob = await put(filename, file.buffer, {
+        access: 'public',
+        contentType: file.mimetype,
+        token: process.env.BLOB_READ_WRITE_TOKEN!.trim()
+      });
+      fileUrl = blob.url;
+    } else {
+      fileUrl = `/uploads/${filename}`;
+    }
 
     res.status(201).json({
       success: true,
       url: fileUrl,
-      filename: file.filename,
+      filename,
       mimetype: file.mimetype,
       size: file.size
     });
