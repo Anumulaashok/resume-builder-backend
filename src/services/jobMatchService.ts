@@ -1,3 +1,6 @@
+import { ICareerProfileData } from '../models/CareerProfile';
+import { buildProfileFactIndex } from './groundingService';
+
 export interface JobMatchBreakdown {
   skills: number;
   experience: number;
@@ -9,6 +12,24 @@ export interface JobMatchKeyword {
   occurrences: number;
 }
 
+export interface VerifiedProfileSkill extends JobMatchKeyword {
+  source_fact_ids: string[];
+}
+
+export interface TransferableProfileSkill {
+  keyword: string;
+  occurrences: number;
+  domain: string;
+  relatedProfileSkills: string[];
+  source_fact_ids: string[];
+  guidance: string;
+}
+
+export interface UnconfirmedJobSkill extends JobMatchKeyword {
+  hasTransferableContext?: boolean;
+  relatedProfileSkills?: string[];
+}
+
 export interface JobMatchResult {
   score: number;
   label: 'Excellent match' | 'Good match' | 'Fair match' | 'Low match';
@@ -17,6 +38,10 @@ export interface JobMatchResult {
   missingKeywords: JobMatchKeyword[];
   suggestions: string[];
   totals: { matched: number; required: number };
+  hasCareerProfile?: boolean;
+  profileVerifiedSkills?: VerifiedProfileSkill[];
+  transferableSkills?: TransferableProfileSkill[];
+  unconfirmedSkills?: UnconfirmedJobSkill[];
 }
 
 interface ResumeLike {
@@ -164,10 +189,26 @@ const scoreLabel = (score: number): JobMatchResult['label'] => {
   return 'Low match';
 };
 
+const SKILL_DOMAINS: Array<{ domain: string; skills: string[] }> = [
+  { domain: 'Messaging & Event Streaming', skills: ['Kafka', 'RabbitMQ'] },
+  { domain: 'Cloud Infrastructure', skills: ['AWS', 'Azure', 'GCP', 'Serverless'] },
+  { domain: 'Databases & Caching', skills: ['SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Elasticsearch'] },
+  { domain: 'Frontend Frameworks', skills: ['React', 'Next.js', 'Vue', 'Angular', 'Svelte', 'Redux'] },
+  {
+    domain: 'Backend & API Frameworks',
+    skills: ['Node.js', 'Express', 'NestJS', 'Django', 'Flask', 'FastAPI', 'Spring Boot', '.NET', 'Laravel', 'Rails'],
+  },
+  { domain: 'API Protocols', skills: ['GraphQL', 'REST APIs', 'gRPC'] },
+  { domain: 'DevOps & Containers', skills: ['Docker', 'Kubernetes', 'Terraform', 'CI/CD', 'GitHub Actions', 'Jenkins'] },
+  { domain: 'AI & Data Science', skills: ['Machine Learning', 'Deep Learning', 'PyTorch', 'TensorFlow', 'LLMs', 'Pandas', 'Spark'] },
+  { domain: 'Automated Testing', skills: ['Jest', 'Cypress', 'Playwright', 'Unit Testing'] },
+];
+
 export const analyzeJobMatch = (
   resume: ResumeLike,
   jobDescription: string,
-  jobTitle?: string
+  jobTitle?: string,
+  careerProfile?: ICareerProfileData | null
 ): JobMatchResult => {
   const jd = normalize(jobDescription);
 
@@ -237,13 +278,116 @@ export const analyzeJobMatch = (
 
   const toKeyword = ({ keyword, occurrences }: { keyword: string; occurrences: number }) => ({ keyword, occurrences });
 
+  if (!careerProfile) {
+    return {
+      score,
+      label: scoreLabel(score),
+      breakdown,
+      matchedKeywords: matched.map(toKeyword),
+      missingKeywords: missing.map(toKeyword),
+      suggestions,
+      totals: { matched: matched.length, required: requiredSkills.length },
+    };
+  }
+
+  // Classify missing resume skills against the user's verified Career Profile
+  const factIndex = buildProfileFactIndex(careerProfile);
+  const profileStrings: string[] = [];
+  collectStrings(careerProfile, profileStrings);
+  const profileText = normalize(profileStrings.join(' '));
+
+  const findFactIdsForAliases = (aliases: string[]): string[] => {
+    const ids: string[] = [];
+    for (const [id, entry] of factIndex.facts.entries()) {
+      const entryNorm = normalize(entry.text);
+      if (countAlias(entryNorm, aliases) > 0) {
+        ids.push(id);
+      }
+    }
+    return ids;
+  };
+
+  // Pre-collect all canonical skills present in Career Profile
+  const profileCanonicalSkills = new Map<string, string[]>();
+  for (const [canonical, aliases] of Object.entries(SKILL_DICTIONARY)) {
+    if (countAlias(profileText, aliases) > 0) {
+      profileCanonicalSkills.set(canonical, findFactIdsForAliases(aliases));
+    }
+  }
+
+  const profileVerifiedSkills: VerifiedProfileSkill[] = [];
+  const transferableSkills: TransferableProfileSkill[] = [];
+  const unconfirmedSkills: UnconfirmedJobSkill[] = [];
+
+  for (const item of missing) {
+    const verifiedFactIds = profileCanonicalSkills.get(item.keyword);
+    if (verifiedFactIds) {
+      profileVerifiedSkills.push({
+        keyword: item.keyword,
+        occurrences: item.occurrences,
+        source_fact_ids: verifiedFactIds.length > 0 ? verifiedFactIds : ['career_profile'],
+      });
+      continue;
+    }
+
+    // Check transferable peer skills in the same domain
+    const domainEntry = SKILL_DOMAINS.find((d) => d.skills.includes(item.keyword));
+    const relatedPeers = domainEntry
+      ? domainEntry.skills.filter(
+          (peer) => peer !== item.keyword && profileCanonicalSkills.has(peer)
+        )
+      : [];
+
+    if (domainEntry && relatedPeers.length > 0) {
+      const peerFactIds = Array.from(
+        new Set(relatedPeers.flatMap((peer) => profileCanonicalSkills.get(peer) || []))
+      );
+      const guidance = `Your Career Profile includes ${relatedPeers.join(', ')} (${domainEntry.domain}). Highlight transferable ${domainEntry.domain.toLowerCase()} experience without claiming ${item.keyword} unless you have used it.`;
+      transferableSkills.push({
+        keyword: item.keyword,
+        occurrences: item.occurrences,
+        domain: domainEntry.domain,
+        relatedProfileSkills: relatedPeers,
+        source_fact_ids: peerFactIds,
+        guidance,
+      });
+      unconfirmedSkills.push({
+        keyword: item.keyword,
+        occurrences: item.occurrences,
+        hasTransferableContext: true,
+        relatedProfileSkills: relatedPeers,
+      });
+    } else {
+      unconfirmedSkills.push({
+        keyword: item.keyword,
+        occurrences: item.occurrences,
+        hasTransferableContext: false,
+      });
+    }
+  }
+
+  const profileSuggestions = [...suggestions];
+  if (profileVerifiedSkills.length > 0) {
+    const names = profileVerifiedSkills.slice(0, 3).map((s) => s.keyword).join(', ');
+    profileSuggestions.unshift(
+      `Verified in your Career Profile: add ${names} to this resume in one click.`
+    );
+  }
+  for (const tr of transferableSkills.slice(0, 2)) {
+    profileSuggestions.push(tr.guidance);
+  }
+
   return {
     score,
     label: scoreLabel(score),
     breakdown,
     matchedKeywords: matched.map(toKeyword),
     missingKeywords: missing.map(toKeyword),
-    suggestions,
+    suggestions: profileSuggestions,
     totals: { matched: matched.length, required: requiredSkills.length },
+    hasCareerProfile: true,
+    profileVerifiedSkills,
+    transferableSkills,
+    unconfirmedSkills,
   };
 };

@@ -21,6 +21,20 @@ export interface ISharing {
   privacy: IPrivacySettings;
 }
 
+export interface IProvenanceClaim {
+  targetPath: string;
+  text: string;
+  source_fact_ids: string[];
+  userEnteredMetric?: string;
+}
+
+export interface IResumeProvenance {
+  seededFromCareerProfile?: boolean;
+  careerProfileUpdatedAt?: Date | string | null;
+  targetRole?: string;
+  claims?: IProvenanceClaim[];
+}
+
 export interface IResume extends Document {
   userId: mongoose.Types.ObjectId;
   title: string;
@@ -28,6 +42,7 @@ export interface IResume extends Document {
   templateId?: string;
   themeConfig?: Record<string, any>;
   sharing?: ISharing;
+  provenance?: IResumeProvenance;
   content: {
     basics: {
       name: string;
@@ -88,6 +103,23 @@ const resumeSchema = new Schema({
       hideEmail: { type: Boolean, default: false },
       hidePhone: { type: Boolean, default: false },
       hideAddress: { type: Boolean, default: false }
+    }
+  },
+  provenance: {
+    seededFromCareerProfile: { type: Boolean, default: false },
+    careerProfileUpdatedAt: { type: Schema.Types.Mixed, default: null },
+    targetRole: { type: String, default: '' },
+    claims: {
+      type: [
+        {
+          _id: false,
+          targetPath: { type: String, required: true },
+          text: { type: String, required: true },
+          source_fact_ids: { type: [String], default: [] },
+          userEnteredMetric: { type: String }
+        }
+      ],
+      default: []
     }
   },
   content: {

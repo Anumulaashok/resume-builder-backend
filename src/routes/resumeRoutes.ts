@@ -20,6 +20,7 @@ import {
   getResumeHistorySnapshot,
   restoreResumeHistory,
   generateResumeFromPrompt,
+  rewriteResumeBullet,
   analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
@@ -49,6 +50,8 @@ router.use(protect);
 router.route('/')
   .get(getResumes)
   .post(validate(resumeValidation), asyncHandler(createResume));
+
+router.post('/bullets/rewrite', asyncHandler(rewriteResumeBullet));
 
 // Share settings, custom slug & view stats management for resume owner
 router.route('/:resumeId/share')
@@ -88,6 +91,7 @@ router.post('/:resumeId/history/:index/restore', validate(historyIndexValidation
 
 router.post('/:resumeId/undo', asyncHandler(undoResume));
 router.post('/:resumeId/generate', asyncHandler(generateResumeFromPrompt));
+router.post('/:resumeId/bullets/rewrite', asyncHandler(rewriteResumeBullet));
 router.post('/:resumeId/job-match', asyncHandler(analyzeResumeJobMatch));
 
 export default router;
