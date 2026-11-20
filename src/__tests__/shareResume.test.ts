@@ -40,6 +40,11 @@ describe('Token-Based Public Share Links & Privacy Controls', () => {
         userId: 'owner-id',
         title: 'Software Engineer Resume',
         templateId: 'modern',
+        targetRole: 'Staff Frontend Engineer',
+        targetCompany: 'Secret Corp',
+        jobDescription: 'Confidential internal posting description',
+        atsScore: 88,
+        parentResumeId: '507f1f77bcf86cd799439011',
         sharing: {
           isPublic: true,
           shareToken: 'valid-token-123',
@@ -80,9 +85,14 @@ describe('Token-Based Public Share Links & Privacy Controls', () => {
       expect(res.body.data.content.basics.email).toBe('jane@example.com');
       expect(res.body.data.content.basics.phone).toBe('555-1234');
       expect(res.body.data.content.basics.location.address).toBe('123 Main St');
-      // Crucial: ensure internal userId and history are stripped
+      // Crucial: ensure internal userId, history, and job-targeting metadata are stripped
       expect(res.body.data.userId).toBeUndefined();
       expect(res.body.data.history).toBeUndefined();
+      expect(res.body.data.targetRole).toBeUndefined();
+      expect(res.body.data.targetCompany).toBeUndefined();
+      expect(res.body.data.jobDescription).toBeUndefined();
+      expect(res.body.data.atsScore).toBeUndefined();
+      expect(res.body.data.parentResumeId).toBeUndefined();
     });
 
     it('strictly redacts email, phone, and address when marked private', async () => {

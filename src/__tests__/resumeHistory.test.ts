@@ -460,6 +460,44 @@ describe('Resume Version History API & Snapshot Throttling', () => {
       expect(doc.history).toHaveLength(3);
     });
 
+    it('records, returns, and restores templateId on history snapshots', async () => {
+      const doc = makeResumeDoc({
+        templateId: 'classic',
+        history: []
+      });
+      jest.spyOn(Resume, 'findOne').mockResolvedValue(doc);
+
+      // Switch template from 'classic' to 'executive' -> records 'classic' on history[0]
+      const patchRes = await request(app)
+        .patch('/api/resumes/resume-1')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          title: doc.title,
+          templateId: 'executive',
+          content: doc.content
+        });
+
+      expect(patchRes.status).toBe(200);
+      expect(doc.templateId).toBe('executive');
+      expect(doc.history).toHaveLength(1);
+      expect(doc.history[0].templateId).toBe('classic');
+
+      // Fetching snapshot 0 returns saved templateId: 'classic'
+      const snapRes = await request(app)
+        .get('/api/resumes/resume-1/history/0')
+        .set('Authorization', `Bearer ${ownerToken}`);
+      expect(snapRes.status).toBe(200);
+      expect(snapRes.body.data.templateId).toBe('classic');
+
+      // Restoring snapshot 0 snapshots 'executive' into history[1] and restores 'classic'
+      const restoreRes = await request(app)
+        .post('/api/resumes/resume-1/history/0/restore')
+        .set('Authorization', `Bearer ${ownerToken}`);
+      expect(restoreRes.status).toBe(200);
+      expect(doc.templateId).toBe('classic');
+      expect(doc.history[1].templateId).toBe('executive');
+    });
+
     it('rejects invalid index with 400 and out-of-bounds index with 404 on restore', async () => {
       const doc = makeResumeDoc({ history: [] });
       jest.spyOn(Resume, 'findOne').mockResolvedValue(doc);

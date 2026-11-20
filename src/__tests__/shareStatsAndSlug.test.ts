@@ -120,6 +120,11 @@ describe('Resume Sharing Analytics, Bot/Owner Filtering, and Custom URL Slugs', 
       );
 
       const resumeDoc = makeMockResumeDoc({
+        targetRole: 'Principal Platform Engineer',
+        targetCompany: 'Hidden Corp',
+        jobDescription: 'Confidential role specification',
+        atsScore: 93,
+        parentResumeId: '507f1f77bcf86cd799439011',
         sharing: {
           isPublic: true,
           shareToken: 'tok-public-123',
@@ -147,6 +152,11 @@ describe('Resume Sharing Analytics, Bot/Owner Filtering, and Custom URL Slugs', 
       expect(res.body.data.content.basics.location.city).toBe('Seattle');
       expect(res.body.data.userId).toBeUndefined();
       expect(res.body.data.history).toBeUndefined();
+      expect(res.body.data.targetRole).toBeUndefined();
+      expect(res.body.data.targetCompany).toBeUndefined();
+      expect(res.body.data.jobDescription).toBeUndefined();
+      expect(res.body.data.atsScore).toBeUndefined();
+      expect(res.body.data.parentResumeId).toBeUndefined();
 
       // Increments lifetime viewCount & today's count, prunes 45-day-old entry
       expect(resumeDoc.sharing.viewCount).toBe(10);

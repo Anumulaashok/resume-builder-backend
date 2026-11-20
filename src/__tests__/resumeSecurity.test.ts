@@ -75,6 +75,48 @@ describe('Resume field allowlist and error mapping', () => {
     expect(payload.history).toBeUndefined();
   });
 
+  it('persists targetRole, targetCompany, jobDescription, atsScore, and parentResumeId on create and update', async () => {
+    const createSpy = jest.spyOn(Resume, 'create').mockImplementation((data: any) => Promise.resolve({ _id: 'branched-1', ...data }));
+
+    const createRes = await request(app)
+      .post('/api/resumes')
+      .send({
+        title: 'Base Resume — Stripe · Staff Engineer',
+        targetRole: 'Staff Engineer',
+        targetCompany: 'Stripe',
+        jobDescription: 'Build resilient distributed payment infrastructure with Go and Kafka.',
+        atsScore: 82,
+        parentResumeId: '507f1f77bcf86cd799439011',
+        content: { basics: { name: 'A', email: 'a@x.com' }, sections: [], sectionOrder: [] },
+      });
+
+    expect(createRes.status).toBe(201);
+    const createdPayload: any = createSpy.mock.calls[0][0];
+    expect(createdPayload.targetRole).toBe('Staff Engineer');
+    expect(createdPayload.targetCompany).toBe('Stripe');
+    expect(createdPayload.jobDescription).toContain('distributed payment infrastructure');
+    expect(createdPayload.atsScore).toBe(82);
+    expect(createdPayload.parentResumeId).toBe('507f1f77bcf86cd799439011');
+
+    const doc: any = makeDoc();
+    jest.spyOn(Resume, 'findOne').mockResolvedValue(doc);
+
+    const patchRes = await request(app)
+      .patch('/api/resumes/resume-1')
+      .send({
+        title: 'Updated Tailored',
+        targetRole: 'Principal Engineer',
+        targetCompany: 'Acme',
+        atsScore: 91,
+        content: { basics: { name: 'A', email: 'a@x.com' }, sections: [], sectionOrder: [] },
+      });
+
+    expect(patchRes.status).toBe(200);
+    expect(doc.targetRole).toBe('Principal Engineer');
+    expect(doc.targetCompany).toBe('Acme');
+    expect(doc.atsScore).toBe(91);
+  });
+
   it('maps a malformed ObjectId (CastError) to 404', async () => {
     jest.spyOn(Resume, 'findOne').mockRejectedValue(
       new mongoose.Error.CastError('ObjectId', 'not-an-id', '_id')

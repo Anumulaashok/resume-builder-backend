@@ -17,6 +17,18 @@ export const signupValidation = [
 export const resumeValidation = [
   body('title').trim().notEmpty(),
   body('themeConfig').optional().isObject(),
+  body('targetRole').optional({ values: 'null' }).isString().trim().isLength({ max: 200 }),
+  body('targetCompany').optional({ values: 'null' }).isString().trim().isLength({ max: 200 }),
+  body('jobDescription').optional({ values: 'null' }).isString().isLength({ max: 20000 }),
+  body('atsScore')
+    .optional({ values: 'null' })
+    .custom((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100)
+    .withMessage('atsScore must be a number between 0 and 100'),
+  body('parentResumeId')
+    .optional({ values: 'falsy' })
+    .isString()
+    .trim()
+    .isLength({ max: 100 }),
   body('content.basics.name').trim().notEmpty(),
   body('content.basics.email').isEmail(),
   body('content.sections').isArray(),

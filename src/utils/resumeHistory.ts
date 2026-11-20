@@ -19,6 +19,7 @@ const IGNORED_TEXT_KEYS = new Set([
 export interface HistoryEntryLike {
   title?: string;
   summary?: string;
+  templateId?: string;
   content?: any;
   themeConfig?: any;
   updatedAt?: Date | string;
@@ -211,6 +212,7 @@ export function shouldCreateSnapshot(params: {
   nextSummary?: string;
   contentChanged: boolean;
   themeChanged: boolean;
+  templateChanged?: boolean;
   now?: Date;
 }): boolean {
   const {
@@ -221,10 +223,11 @@ export function shouldCreateSnapshot(params: {
     nextSummary,
     contentChanged,
     themeChanged,
+    templateChanged = false,
     now = new Date(),
   } = params;
 
-  if (!contentChanged && !themeChanged) {
+  if (!contentChanged && !themeChanged && !templateChanged) {
     return false;
   }
 
@@ -300,11 +303,16 @@ export function buildSnapshotChangeSummary(
   const themeDiff =
     JSON.stringify(entry?.themeConfig ?? null) !==
     JSON.stringify(previousEntry?.themeConfig ?? null);
+  const templateDiff =
+    (entry?.templateId ?? null) !== (previousEntry?.templateId ?? null);
   const contentDiff =
     JSON.stringify(entry?.content ?? null) !==
     JSON.stringify(previousEntry?.content ?? null);
 
-  if (themeDiff && !contentDiff) {
+  if (templateDiff && !contentDiff && !themeDiff) {
+    return { sectionCount, wordCount, summary: `${baseLabel} (template updated)` };
+  }
+  if ((themeDiff || templateDiff) && !contentDiff) {
     return { sectionCount, wordCount, summary: `${baseLabel} (theme updated)` };
   }
   if (contentDiff) {
