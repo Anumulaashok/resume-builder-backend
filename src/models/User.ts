@@ -5,13 +5,19 @@ export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
+  careerProfileId?: mongoose.Types.ObjectId | null;
   matchPassword(enteredPassword: string): Promise<boolean>;
 }
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true }
+  password: { type: String, required: true },
+  careerProfileId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'CareerProfile',
+    default: null
+  }
 }, { timestamps: true });
 
 userSchema.pre('save', async function(next) {

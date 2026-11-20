@@ -21,6 +21,7 @@ import portfolioRoutes from './routes/portfolioRoutes';
 import publicRoutes from './routes/publicRoutes';
 import applicationRoutes from './routes/applicationRoutes';
 import coverLetterRoutes from './routes/coverLetterRoutes';
+import careerProfileRoutes from './routes/careerProfileRoutes';
 import { getPublicPortfolio } from './controllers/portfolioController';
 
 // Local imports - middleware
@@ -118,6 +119,7 @@ class App {
         this.app.use('/api/portfolios', portfolioRoutes);
         this.app.use('/api/applications', applicationRoutes);
         this.app.use('/api/cover-letters', coverLetterRoutes);
+        this.app.use('/api/career-profile', careerProfileRoutes);
 
         // Direct public vanity slug route for published portfolios
         this.app.get('/p/:slug', publicPortfolioLimiter, asyncHandler(getPublicPortfolio));

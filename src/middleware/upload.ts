@@ -74,6 +74,75 @@ const memoryUpload = multer({
 
 export const upload = isBlobStorageEnabled() ? memoryUpload : diskUpload;
 
+export const RESUME_IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+export const RESUME_IMPORT_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+];
+
+export const RESUME_IMPORT_EXTENSIONS = ['.pdf', '.docx', '.txt'];
+
+const resumeImportFileFilter = (
+  _req: Request,
+  file: Express.Multer.File,
+  cb: FileFilterCallback
+) => {
+  const ext = path.extname(file.originalname || '').toLowerCase();
+  const mime = (file.mimetype || '').toLowerCase();
+
+  const isAllowedExtension = RESUME_IMPORT_EXTENSIONS.includes(ext);
+  const isAllowedMime =
+    RESUME_IMPORT_MIME_TYPES.includes(mime) ||
+    (mime === 'application/octet-stream' && isAllowedExtension);
+
+  if (!isAllowedExtension || !isAllowedMime) {
+    return cb(
+      new AppError(
+        'Unsupported resume file format. Please upload a PDF (.pdf), Word (.docx), or Plain Text (.txt) file up to 5MB.',
+        400
+      )
+    );
+  }
+  cb(null, true);
+};
+
+// Always parse resume documents strictly in memory — never write resume imports to disk or /uploads.
+const resumeImportMemoryUpload = multer({
+  storage: memoryStorage,
+  limits: {
+    fileSize: RESUME_IMPORT_MAX_FILE_SIZE,
+    files: 1,
+  },
+  fileFilter: resumeImportFileFilter,
+});
+
+export const handleResumeImportUpload = () => {
+  const middleware = resumeImportMemoryUpload.any();
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    middleware(req, res, (err: any) => {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return next(
+            new AppError('File too large. Maximum allowed resume file size is 5MB.', 400)
+          );
+        }
+        return next(new AppError(`Resume upload error: ${err.message}`, 400));
+      } else if (err) {
+        return next(err);
+      }
+
+      if (Array.isArray(req.files) && req.files.length > 0) {
+        req.file = req.files[0];
+      }
+
+      next();
+    });
+  };
+};
+
 export const handleUpload = () => {
   const diskMulterMiddleware = diskUpload.any();
   const memoryMulterMiddleware = memoryUpload.any();

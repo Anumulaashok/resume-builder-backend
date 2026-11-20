@@ -5,6 +5,7 @@ import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
 import { analyzeJobMatch } from '../services/jobMatchService';
+import { findUserCareerProfileSafely } from './careerProfileController';
 import {
   build30DayViewsSeries,
   recordPublicResumeViewIfEligible,
@@ -21,7 +22,7 @@ import {
   renderResumePlainText
 } from '../services/exportService';
 
-const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
+const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content', 'provenance'] as const;
 
 // Restrict client input to editable fields so ownership, sharing and history can't be overwritten.
 const pickEditableFields = (body: Record<string, unknown> = {}) =>
@@ -118,9 +119,9 @@ export const generateResumeFromPrompt = async (
   next: NextFunction
 ) => {
   const userId = req.user?._id;
-  const { prompt } = req.body;
+  const { prompt, targetRole, jobDescription } = req.body || {};
 
-  if (!prompt) {
+  if (!prompt && !targetRole) {
     return next(new AppError('Missing required field (prompt)', 400));
   }
   if (!userId) {
@@ -134,11 +135,24 @@ export const generateResumeFromPrompt = async (
       return next(new AppError('Resume not found', 404));
     }
 
-    const aiResponse = await aiService.analyzeResumePrompt(prompt);
+    const careerProfile = await findUserCareerProfileSafely(userId);
+    const aiResponse = await aiService.analyzeResumePrompt(
+      prompt || `Tailor resume for ${targetRole}`,
+      careerProfile
+        ? {
+            careerProfile,
+            targetRole,
+            jobDescription,
+            fallbackName: req.user?.name,
+            fallbackEmail: req.user?.email,
+          }
+        : undefined
+    );
 
     resume.summary = aiResponse.summary;
     if (aiResponse.title) resume.title = aiResponse.title;
     if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
+    if (aiResponse.provenance) resume.provenance = aiResponse.provenance;
     const updatedResume = await resume.save();
 
     res.json({
@@ -147,10 +161,71 @@ export const generateResumeFromPrompt = async (
     });
 
   } catch (error: any) {
+    if (error instanceof AppError) {
+      return next(error);
+    }
     console.error('Generate resume from prompt error:', error.message);
-    if (error.message.includes('AI Service')) {
+    if (error?.message?.includes('AI Service')) {
       return next(new AppError(`AI Service Error: ${error.message}`, 502));
     }
+    next(error);
+  }
+};
+
+// @desc    Rewrite or shorten a single resume bullet grounded in Career Profile & user metrics
+// @route   POST /api/resumes/bullets/rewrite
+// @access  Private
+export const rewriteResumeBullet = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const {
+      bullet,
+      action,
+      sectionType,
+      itemId,
+      company,
+      role,
+      projectName,
+      technologies,
+      metricCategory,
+      userMetric,
+      targetRole,
+      jobDescription,
+    } = req.body || {};
+
+    if (!bullet || typeof bullet !== 'string' || !bullet.trim()) {
+      throw new AppError('Bullet text is required', 400);
+    }
+
+    const careerProfile = await findUserCareerProfileSafely(req.user._id);
+    const result = await aiService.rewriteBulletWithAI({
+      bullet,
+      action,
+      sectionType,
+      itemId,
+      company,
+      role,
+      projectName,
+      technologies: Array.isArray(technologies) ? technologies : undefined,
+      metricCategory,
+      userMetric,
+      targetRole,
+      jobDescription,
+      careerProfile,
+    });
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
     next(error);
   }
 };
@@ -746,9 +821,10 @@ export const analyzeResumeJobMatch = async (
     }
 
     const resumeData = resume.toObject ? resume.toObject() : resume;
+    const careerProfile = await findUserCareerProfileSafely(req.user?._id);
     res.json({
       success: true,
-      data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
+      data: analyzeJobMatch(resumeData, jobDescription, jobTitle, careerProfile)
     });
   } catch (error) {
     next(error);
