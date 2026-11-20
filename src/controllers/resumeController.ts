@@ -20,6 +20,7 @@ import {
   buildSafeExportFilename,
   renderResumePlainText
 } from '../services/exportService';
+import { normalizeAIResumePayload } from '../utils/resumeNormalizer';
 
 const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
 
@@ -135,10 +136,14 @@ export const generateResumeFromPrompt = async (
     }
 
     const aiResponse = await aiService.analyzeResumePrompt(prompt);
+    const normalized = normalizeAIResumePayload(aiResponse as Record<string, any>, resume);
 
-    resume.summary = aiResponse.summary;
-    if (aiResponse.title) resume.title = aiResponse.title;
-    if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
+    resume.title = normalized.title;
+    resume.summary = normalized.summary;
+    resume.content = normalized.content as IResume['content'];
+    if (typeof (resume as any).markModified === 'function') {
+      resume.markModified('content');
+    }
     const updatedResume = await resume.save();
 
     res.json({
@@ -147,8 +152,8 @@ export const generateResumeFromPrompt = async (
     });
 
   } catch (error: any) {
-    console.error('Generate resume from prompt error:', error.message);
-    if (error.message.includes('AI Service')) {
+    console.error('Generate resume from prompt error:', error?.message);
+    if (typeof error?.message === 'string' && error.message.includes('AI Service')) {
       return next(new AppError(`AI Service Error: ${error.message}`, 502));
     }
     next(error);

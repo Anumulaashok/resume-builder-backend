@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { AppError } from '../utils/appError';
 import logger from '../utils/logger';
+import {
+  CANONICAL_SECTION_TYPES,
+  normalizeAIResumePayload
+} from '../utils/resumeNormalizer';
 
 // Zod Schema for Resume Generation matching the Mongoose model
 const LocationSchema = z.object({
@@ -13,16 +17,22 @@ const LocationSchema = z.object({
 const BasicsSchema = z.object({
   name: z.string(),
   label: z.string().optional(),
-  email: z.string(),
+  email: z.union([z.string().email(), z.literal('')]),
   phone: z.string().optional(),
+  summary: z.string().optional(),
   location: LocationSchema
 });
 
+const SectionItemSchema = z.object({
+  id: z.string().min(1)
+}).passthrough();
+
 const SectionSchema = z.object({
-  id: z.string(),
-  type: z.string(),
-  title: z.string(),
-  content: z.array(z.any()),
+  id: z.string().min(1),
+  type: z.enum(CANONICAL_SECTION_TYPES),
+  title: z.string().min(1),
+  content: z.array(SectionItemSchema),
+  enabled: z.boolean().optional(),
   isCustom: z.boolean().optional()
 });
 
@@ -32,7 +42,17 @@ export const GeneratedResumeSchema = z.object({
   content: z.object({
     basics: BasicsSchema,
     sections: z.array(SectionSchema),
-    sectionOrder: z.array(z.string())
+    sectionOrder: z.array(z.string().min(1))
+  })
+});
+
+const RawGeneratedResumeEnvelopeSchema = z.object({
+  title: z.string().nullable().optional(),
+  summary: z.string().nullable().optional(),
+  content: z.object({
+    basics: z.record(z.any()).nullable().optional(),
+    sections: z.array(z.any()),
+    sectionOrder: z.array(z.any()).nullable().optional()
   })
 });
 
@@ -44,6 +64,31 @@ const RETRY_DELAY_MS = 1000;
 const TIMEOUT_MS = 5000;
 
 export type AIResumeResult = Partial<GeneratedResume> & { summary: string };
+
+const RESUME_GENERATION_SYSTEM_PROMPT = `You are an expert resume builder. Extract ONLY facts grounded in the user's prompt into a structured JSON resume.
+Rules:
+1. Never fabricate companies, job titles, metrics, degrees, certifications, technologies, or contact details not supported by the prompt.
+2. If the user's prompt does not include a name or valid email address, set "basics.name" or "basics.email" to "" instead of inventing placeholders.
+3. Every section MUST have a unique non-empty "id" string, a human-readable "title", and a "type" selected from these supported SectionType categories:
+   "WorkItem", "EducationItem", "SkillItem", "TechnicalSkillItem", "SoftSkillItem", "ProjectItem", "LanguageItem", "CertificateItem", "AwardItem", "AchievementItem", "CourseItem", "OrganizationItem", "PublicationItem", "ReferenceItem", "InterestItem", "CustomItem" (with "isCustom": true for custom categories).
+4. Every entry in a section's "content" array MUST be an object with a unique non-empty "id" string and the expected fields for its section type:
+   - WorkItem: { "id": "work-1-item-1", "name": "Company", "company": "Company", "position": "Role", "location": "City, State", "startDate": "Jan 2022", "endDate": "Dec 2024", "current": false, "description": "..." }
+   - EducationItem: { "id": "edu-1-item-1", "institution": "University", "degree": "B.S.", "field": "Computer Science", "location": "City, State", "startDate": { "month": "Sep", "year": "2018" }, "endDate": { "month": "May", "year": "2022" }, "current": false, "description": "..." }
+   - SkillItem: { "id": "skill-1-item-1", "name": "Skill or Category", "level": "Advanced", "subSkills": ["Keyword"] }
+   - ProjectItem: { "id": "proj-1-item-1", "name": "Project Name", "description": "...", "url": "", "startDate": "2023", "endDate": "2024", "technologies": ["Tech"] }
+   - CustomItem / others: include "id", "name" (or "title" for PublicationItem/CustomItem), and relevant factual fields ("issuer", "publisher", "language", "level", "date", "description").
+5. Populate "content.sectionOrder" with every section "id" in display order.
+The JSON must match this structure:
+{
+  "title": "String",
+  "summary": "String",
+  "content": {
+    "basics": { "name": "String", "email": "String", "phone": "String (optional)", "label": "String (optional)" },
+    "sections": [ { "id": "String", "type": "WorkItem | EducationItem | SkillItem | ProjectItem | ...", "title": "String", "content": [ { "id": "String" } ] } ],
+    "sectionOrder": [ "String" ]
+  }
+}
+Return ONLY valid JSON. No markdown, no explanations.`;
 
 export const analyzeResumePrompt = async (prompt: string): Promise<AIResumeResult> => {
   const apiUrl = process.env.LLAMA_API_URL;
@@ -58,17 +103,7 @@ export const analyzeResumePrompt = async (prompt: string): Promise<AIResumeResul
     messages: [
       {
         role: 'system',
-        content: `You are an expert resume builder. Extract the user's prompt into a structured JSON resume. The JSON must exactly match this schema:
-{
-  "title": "String",
-  "summary": "String",
-  "content": {
-    "basics": { "name": "String", "email": "String", "phone": "String (optional)", "label": "String (optional)" },
-    "sections": [ { "id": "String", "type": "String", "title": "String", "content": [ ] } ],
-    "sectionOrder": [ "String" ]
-  }
-}
-Return ONLY valid JSON. No markdown, no explanations.`
+        content: RESUME_GENERATION_SYSTEM_PROMPT
       },
       {
         role: 'user',
@@ -110,10 +145,10 @@ Return ONLY valid JSON. No markdown, no explanations.`
       
       // Attempt to extract JSON if it contains markdown blocks or extra text
       jsonString = jsonString.trim();
-      if (jsonString.startsWith('\`\`\`json')) {
-        jsonString = jsonString.replace(/^\`\`\`json/, '').replace(/\`\`\`$/, '').trim();
-      } else if (jsonString.startsWith('\`\`\`')) {
-        jsonString = jsonString.replace(/^\`\`\`/, '').replace(/\`\`\`$/, '').trim();
+      if (jsonString.startsWith('```json')) {
+        jsonString = jsonString.replace(/^```json/, '').replace(/```$/, '').trim();
+      } else if (jsonString.startsWith('```')) {
+        jsonString = jsonString.replace(/^```/, '').replace(/```$/, '').trim();
       } else {
         // Fallback robust json extraction in case there's text around it
         const jsonStart = jsonString.indexOf('{');
@@ -124,8 +159,17 @@ Return ONLY valid JSON. No markdown, no explanations.`
       }
 
       const parsedJson = JSON.parse(jsonString);
-      
-      const result = GeneratedResumeSchema.safeParse(parsedJson);
+
+      const envelopeCheck = RawGeneratedResumeEnvelopeSchema.safeParse(parsedJson);
+      if (!envelopeCheck.success) {
+        logger.error(`Validation failed for AI output: ${JSON.stringify(envelopeCheck.error.errors)}`);
+        throw new Error('AI generated malformed structure that failed validation.');
+      }
+
+      const normalizedPayload = normalizeAIResumePayload(parsedJson, null, {
+        preserveEmptyWhenNoDraft: true
+      });
+      const result = GeneratedResumeSchema.safeParse(normalizedPayload);
       
       if (!result.success) {
         logger.error(`Validation failed for AI output: ${JSON.stringify(result.error.errors)}`);
