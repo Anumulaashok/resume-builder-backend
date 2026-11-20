@@ -224,3 +224,41 @@ export const coverLetterUpdateValidation = [
 export const coverLetterGenerateValidation = [
   body('prompt').optional().isString().isLength({ max: 5000 })
 ];
+
+export const careerProfilePayloadValidation = [
+  body('basics')
+    .optional()
+    .custom(isPlainObject)
+    .withMessage('basics must be an object'),
+  body('basics.email')
+    .optional({ values: 'falsy' })
+    .isString()
+    .trim()
+    .isEmail()
+    .withMessage('basics.email must be a valid email address'),
+  body('experiences')
+    .optional()
+    .isArray({ max: 100 })
+    .withMessage('experiences must be an array'),
+  body('projects')
+    .optional()
+    .isArray({ max: 100 })
+    .withMessage('projects must be an array'),
+  body('skills')
+    .optional()
+    .isArray({ max: 200 })
+    .withMessage('skills must be an array'),
+  body('education')
+    .optional()
+    .isArray({ max: 50 })
+    .withMessage('education must be an array'),
+  body('certifications')
+    .optional()
+    .isArray({ max: 100 })
+    .withMessage('certifications must be an array'),
+  body('content')
+    .optional()
+    .custom(isPlainObject)
+    .withMessage('content must be an object')
+];
+

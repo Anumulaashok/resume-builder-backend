@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
 import { CoverLetter, ICoverLetterRecipient } from '../models/CoverLetter';
 import { Resume, IResume } from '../models/Resume';
+import { CareerProfile, ICareerProfile } from '../models/CareerProfile';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
@@ -349,15 +350,29 @@ export const generateCoverLetter = async (
       });
     }
 
+    let careerProfileDoc: ICareerProfile | null = null;
+    const isCareerProfileMocked = Boolean((CareerProfile.findOne as any)?._isMockFunction);
+    if (mongoose.connection.readyState === 1 || isCareerProfileMocked) {
+      careerProfileDoc = await CareerProfile.findOne({
+        userId: req.user._id
+      });
+    }
+
     const prompt = typeof req.body?.prompt === 'string' ? req.body.prompt : undefined;
     const resumeData = linkedResume
       ? linkedResume.toObject
         ? linkedResume.toObject()
         : linkedResume
       : null;
+    const profileData = careerProfileDoc
+      ? careerProfileDoc.toObject
+        ? careerProfileDoc.toObject()
+        : careerProfileDoc
+      : null;
 
     const generatedBody = await aiService.generateCoverLetterBody({
       resume: resumeData,
+      careerProfile: profileData,
       recipient: coverLetter.recipient,
       jobTitle: coverLetter.jobTitle,
       jobDescription: coverLetter.jobDescription,
