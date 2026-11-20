@@ -30,8 +30,21 @@ export const errorHandler = (
   }
 
   if (err.name === 'ValidationError') {
-    const message = Object.values(err.errors || {}).map((e) => e.message).join(', ') || err.message;
-    return res.status(400).json({ success: false, status: 'fail', message });
+    const fieldErrors = Object.entries(err.errors || {}).map(([path, e]) => ({
+      type: 'field',
+      path,
+      field: path,
+      msg: e.message,
+      message: e.message,
+    }));
+    const message =
+      fieldErrors.map((e) => e.message).join('; ') || err.message || 'Validation failed';
+    return res.status(400).json({
+      success: false,
+      status: 'fail',
+      message,
+      errors: fieldErrors,
+    });
   }
 
   if (err.code === 11000) {

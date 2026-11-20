@@ -15,12 +15,28 @@ export const signupValidation = [
 ];
 
 export const resumeValidation = [
-  body('title').trim().notEmpty(),
-  body('themeConfig').optional().isObject(),
-  body('content.basics.name').trim().notEmpty(),
-  body('content.basics.email').isEmail(),
-  body('content.sections').isArray(),
-  body('content.sectionOrder').isArray()
+  body('title').trim().notEmpty().withMessage('Resume title is required'),
+  body('themeConfig')
+    .optional()
+    .isObject()
+    .withMessage('Theme configuration must be an object'),
+  body('content.basics.name')
+    .trim()
+    .notEmpty()
+    .withMessage('Full name is required'),
+  body('content.basics.email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email address is required')
+    .bail()
+    .isEmail()
+    .withMessage('Please enter a valid email address'),
+  body('content.sections')
+    .isArray()
+    .withMessage('Resume sections must be an array'),
+  body('content.sectionOrder')
+    .isArray()
+    .withMessage('Section order must be an array')
 ];
 
 export const sharingSlugValidation = [
