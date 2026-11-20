@@ -27,6 +27,11 @@ export interface IResume extends Document {
   summary?: string;
   templateId?: string;
   themeConfig?: Record<string, any>;
+  targetRole?: string;
+  targetCompany?: string;
+  jobDescription?: string;
+  atsScore?: number | null;
+  parentResumeId?: mongoose.Types.ObjectId | string | null;
   sharing?: ISharing;
   content: {
     basics: {
@@ -54,6 +59,7 @@ export interface IResume extends Document {
   history?: Array<{
     title?: string;
     summary?: string;
+    templateId?: string;
     content: any;
     themeConfig?: any;
     updatedAt: Date;
@@ -68,6 +74,11 @@ const resumeSchema = new Schema({
   summary: String,
   templateId: String,
   themeConfig: Schema.Types.Mixed,
+  targetRole: String,
+  targetCompany: String,
+  jobDescription: String,
+  atsScore: { type: Number, min: 0, max: 100 },
+  parentResumeId: { type: Schema.Types.ObjectId, ref: 'Resume', default: null },
   sharing: {
     isPublic: { type: Boolean, default: false },
     shareToken: { type: String, default: null, index: true },
@@ -116,6 +127,7 @@ const resumeSchema = new Schema({
   history: [{
     title: String,
     summary: String,
+    templateId: String,
     content: Schema.Types.Mixed,
     themeConfig: Schema.Types.Mixed,
     updatedAt: { type: Date, default: Date.now }

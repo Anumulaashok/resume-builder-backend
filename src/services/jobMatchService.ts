@@ -9,12 +9,20 @@ export interface JobMatchKeyword {
   occurrences: number;
 }
 
+export interface RelatedExperienceItem {
+  keyword: string;
+  occurrences: number;
+  relatedSkills: string[];
+  guidance: string;
+}
+
 export interface JobMatchResult {
   score: number;
   label: 'Excellent match' | 'Good match' | 'Fair match' | 'Low match';
   breakdown: JobMatchBreakdown;
   matchedKeywords: JobMatchKeyword[];
   missingKeywords: JobMatchKeyword[];
+  relatedExperience: RelatedExperienceItem[];
   suggestions: string[];
   totals: { matched: number; required: number };
 }
@@ -115,6 +123,86 @@ const SKILL_DICTIONARY: Record<string, string[]> = {
   Communication: ['communication', 'stakeholder management'],
 };
 
+// Adjacent / transferable skills strictly drawn from SKILL_DICTIONARY so we only ever
+// map a missing requirement to verified tools already present on the candidate's resume.
+const ADJACENT_SKILL_MAP: Record<string, string[]> = {
+  JavaScript: ['TypeScript', 'Node.js'],
+  TypeScript: ['JavaScript'],
+  React: ['Next.js', 'React Native', 'Vue', 'Angular', 'Svelte'],
+  'React Native': ['React', 'Flutter', 'Swift', 'Kotlin'],
+  'Next.js': ['React', 'Vue', 'Angular', 'Node.js'],
+  Vue: ['React', 'Angular', 'Svelte', 'Next.js'],
+  Angular: ['React', 'Vue', 'TypeScript'],
+  Svelte: ['React', 'Vue', 'JavaScript'],
+  Redux: ['React', 'TypeScript'],
+  Sass: ['CSS', 'Tailwind CSS'],
+  'Tailwind CSS': ['CSS', 'Sass'],
+  'Node.js': ['Express', 'NestJS', 'JavaScript', 'TypeScript'],
+  Express: ['Node.js', 'NestJS', 'FastAPI', 'Flask'],
+  NestJS: ['Express', 'Node.js', 'Spring Boot', 'TypeScript'],
+  GraphQL: ['REST APIs', 'gRPC', 'TypeScript', 'Node.js'],
+  'REST APIs': ['GraphQL', 'gRPC'],
+  gRPC: ['REST APIs', 'GraphQL', 'Go', 'Microservices'],
+  Python: ['Django', 'Flask', 'FastAPI', 'Pandas'],
+  Django: ['Flask', 'FastAPI', 'Python', 'Rails', 'Laravel'],
+  Flask: ['Django', 'FastAPI', 'Python', 'Express'],
+  FastAPI: ['Django', 'Flask', 'Python', 'Express', 'NestJS'],
+  Java: ['Kotlin', 'Spring Boot', 'C#'],
+  'Spring Boot': ['Java', 'Kotlin', 'NestJS', '.NET', 'Django'],
+  Kotlin: ['Java', 'Spring Boot', 'Swift'],
+  Go: ['Rust', 'Java', 'C++', 'Microservices'],
+  Rust: ['C++', 'Go'],
+  'C#': ['.NET', 'Java', 'TypeScript'],
+  '.NET': ['C#', 'Spring Boot', 'Java'],
+  'C++': ['Rust', 'C#', 'Java'],
+  PHP: ['Laravel', 'Python', 'Ruby'],
+  Laravel: ['PHP', 'Rails', 'Django', 'Express'],
+  Ruby: ['Rails', 'Python'],
+  Rails: ['Ruby', 'Django', 'Laravel'],
+  Swift: ['Kotlin', 'React Native', 'Flutter'],
+  Flutter: ['Dart', 'React Native', 'Swift', 'Kotlin'],
+  Dart: ['Flutter', 'TypeScript'],
+  SQL: ['PostgreSQL', 'MySQL', 'Data Analysis'],
+  PostgreSQL: ['MySQL', 'SQL', 'MongoDB'],
+  MySQL: ['PostgreSQL', 'SQL', 'MongoDB'],
+  MongoDB: ['PostgreSQL', 'MySQL', 'Redis', 'Elasticsearch'],
+  Redis: ['MongoDB', 'Elasticsearch', 'Kafka', 'RabbitMQ', 'PostgreSQL'],
+  Elasticsearch: ['PostgreSQL', 'MongoDB', 'Redis'],
+  Kafka: ['RabbitMQ', 'Redis', 'Microservices', 'System Design'],
+  RabbitMQ: ['Kafka', 'Redis', 'Microservices'],
+  AWS: ['GCP', 'Azure', 'Docker', 'Kubernetes', 'Terraform', 'Serverless'],
+  Azure: ['AWS', 'GCP', 'Docker', 'Kubernetes', 'Terraform'],
+  GCP: ['AWS', 'Azure', 'Docker', 'Kubernetes', 'Terraform'],
+  Docker: ['Kubernetes', 'Linux', 'CI/CD', 'AWS', 'GCP', 'Azure'],
+  Kubernetes: ['Docker', 'Terraform', 'AWS', 'GCP', 'Azure', 'Microservices'],
+  Terraform: ['AWS', 'GCP', 'Azure', 'Kubernetes', 'Docker', 'CI/CD'],
+  'CI/CD': ['GitHub Actions', 'Jenkins', 'Docker', 'Git'],
+  'GitHub Actions': ['Jenkins', 'CI/CD', 'Git', 'Docker'],
+  Jenkins: ['GitHub Actions', 'CI/CD', 'Docker'],
+  Microservices: ['System Design', 'Docker', 'Kubernetes', 'REST APIs', 'gRPC', 'Kafka'],
+  Serverless: ['AWS', 'GCP', 'Azure', 'Docker', 'Node.js'],
+  Jest: ['Cypress', 'Playwright', 'Unit Testing'],
+  Cypress: ['Playwright', 'Jest', 'Unit Testing'],
+  Playwright: ['Cypress', 'Jest', 'Unit Testing'],
+  'Unit Testing': ['Jest', 'Cypress', 'Playwright'],
+  Storybook: ['React', 'Vue', 'UI/UX', 'Figma'],
+  Webpack: ['Vite', 'JavaScript', 'TypeScript'],
+  Vite: ['Webpack', 'JavaScript', 'TypeScript'],
+  Accessibility: ['HTML', 'CSS', 'UI/UX', 'React'],
+  'Performance Optimization': ['React', 'Next.js', 'Webpack', 'Vite', 'System Design'],
+  'Machine Learning': ['Deep Learning', 'PyTorch', 'TensorFlow', 'Python', 'Data Analysis', 'Pandas'],
+  'Deep Learning': ['Machine Learning', 'PyTorch', 'TensorFlow', 'LLMs'],
+  PyTorch: ['TensorFlow', 'Deep Learning', 'Machine Learning', 'Python'],
+  TensorFlow: ['PyTorch', 'Deep Learning', 'Machine Learning', 'Python'],
+  LLMs: ['Deep Learning', 'Machine Learning', 'PyTorch', 'TensorFlow', 'Python'],
+  'Data Analysis': ['Pandas', 'SQL', 'Python', 'Spark'],
+  Pandas: ['Python', 'Data Analysis', 'Spark', 'SQL'],
+  Spark: ['Pandas', 'Python', 'SQL', 'Data Analysis', 'Kafka'],
+  Figma: ['UI/UX', 'Storybook', 'CSS'],
+  'UI/UX': ['Figma', 'Accessibility', 'CSS', 'Tailwind CSS'],
+  'System Design': ['Microservices', 'Kafka', 'Redis', 'PostgreSQL', 'Kubernetes'],
+};
+
 const STOPWORDS = new Set(
   ('a an and are as at be by for from has have in is it its of on or that the to was were will with you your we our ' +
     'they their this these those who what which when where how all any can may must should would could about into over ' +
@@ -186,6 +274,31 @@ export const analyzeJobMatch = (
   const matched = requiredSkills.filter((s) => countAlias(resumeText, s.aliases) > 0);
   const missing = requiredSkills.filter((s) => countAlias(resumeText, s.aliases) === 0);
 
+  // Identify ALL dictionary skills present anywhere on the resume so missing JD skills
+  // can be mapped to verified adjacent tools without fabricating unheld skills.
+  const allResumeMatchedSkills = new Set(
+    Object.entries(SKILL_DICTIONARY)
+      .filter(([, aliases]) => countAlias(resumeText, aliases) > 0)
+      .map(([keyword]) => keyword)
+  );
+
+  const relatedExperience: RelatedExperienceItem[] = missing
+    .map((s) => {
+      const adjacentCandidates = ADJACENT_SKILL_MAP[s.keyword] || [];
+      const relatedSkills = adjacentCandidates.filter((adj) => allResumeMatchedSkills.has(adj));
+      if (relatedSkills.length === 0) {
+        return null;
+      }
+      const listedTools = relatedSkills.slice(0, 3).join(', ');
+      return {
+        keyword: s.keyword,
+        occurrences: s.occurrences,
+        relatedSkills,
+        guidance: `Do not list ${s.keyword} unless you have used it. Instead, highlight concrete outcomes with ${listedTools} inside your Work Experience or Project bullets — modern ATS engines (such as iCIMS Role Fit) score adjacent tools in experience context rather than isolated keyword lists.`,
+      };
+    })
+    .filter((item): item is RelatedExperienceItem => item !== null);
+
   // Experience keywords: non-skill JD terms repeated at least twice, checked against resume text.
   const skillAliasSet = new Set(Object.values(SKILL_DICTIONARY).flat());
   const termCounts = new Map<string, number>();
@@ -243,6 +356,7 @@ export const analyzeJobMatch = (
     breakdown,
     matchedKeywords: matched.map(toKeyword),
     missingKeywords: missing.map(toKeyword),
+    relatedExperience,
     suggestions,
     totals: { matched: matched.length, required: requiredSkills.length },
   };

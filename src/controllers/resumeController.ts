@@ -21,12 +21,25 @@ import {
   renderResumePlainText
 } from '../services/exportService';
 
-const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
+const EDITABLE_RESUME_FIELDS = [
+  'title',
+  'summary',
+  'templateId',
+  'themeConfig',
+  'targetRole',
+  'targetCompany',
+  'jobDescription',
+  'atsScore',
+  'parentResumeId',
+  'content'
+] as const;
 
 // Restrict client input to editable fields so ownership, sharing and history can't be overwritten.
 const pickEditableFields = (body: Record<string, unknown> = {}) =>
   EDITABLE_RESUME_FIELDS.reduce<Record<string, unknown>>((acc, key) => {
-    if (body[key] !== undefined) acc[key] = body[key];
+    if (body[key] !== undefined) {
+      acc[key] = key === 'parentResumeId' && body[key] === '' ? null : body[key];
+    }
     return acc;
   }, {});
 
@@ -183,6 +196,10 @@ export const updateResume = async (
       req.body.themeConfig !== undefined &&
       JSON.stringify(existingResume.themeConfig) !== JSON.stringify(req.body.themeConfig)
     );
+    const templateChanged = Boolean(
+      req.body.templateId !== undefined &&
+      (existingResume.templateId ?? '') !== (req.body.templateId ?? '')
+    );
 
     const now = new Date();
     const nextContent = req.body.content !== undefined ? req.body.content : existingResume.content;
@@ -197,6 +214,7 @@ export const updateResume = async (
         nextSummary,
         contentChanged,
         themeChanged,
+        templateChanged,
         now
       })
     ) {
@@ -206,6 +224,7 @@ export const updateResume = async (
       existingResume.history.push({
         title: existingResume.title,
         ...(existingResume.summary !== undefined ? { summary: existingResume.summary } : {}),
+        ...(existingResume.templateId !== undefined ? { templateId: existingResume.templateId } : {}),
         content: cloneSnapshotValue(existingResume.content),
         themeConfig: cloneSnapshotValue(existingResume.themeConfig),
         updatedAt: now
@@ -282,10 +301,13 @@ export const undoResume = async (
     // Pop the last history state
     const lastState = resume.history.pop();
     
-    // Restore the content and themeConfig
+    // Restore the content, themeConfig, and templateId
     resume.content = lastState!.content;
     if (lastState && 'themeConfig' in lastState) {
       resume.themeConfig = lastState.themeConfig;
+    }
+    if (lastState && 'templateId' in lastState && lastState.templateId !== undefined) {
+      resume.templateId = lastState.templateId;
     }
 
     const updatedResume = await resume.save();
@@ -746,9 +768,15 @@ export const analyzeResumeJobMatch = async (
     }
 
     const resumeData = resume.toObject ? resume.toObject() : resume;
+    const analysis = analyzeJobMatch(resumeData, jobDescription, jobTitle);
+    resume.atsScore = analysis.score;
+    if (typeof (resume as any).save === 'function') {
+      await resume.save();
+    }
+
     res.json({
       success: true,
-      data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
+      data: analysis
     });
   } catch (error) {
     next(error);
@@ -864,6 +892,7 @@ export const getResumeHistorySnapshot = async (
           resume.title ||
           'Untitled Resume',
         ...(snapshot?.summary !== undefined ? { summary: snapshot.summary } : {}),
+        ...(snapshot?.templateId !== undefined ? { templateId: snapshot.templateId } : {}),
         content: snapshot?.content,
         themeConfig: snapshot?.themeConfig,
         updatedAt: snapshot?.updatedAt
@@ -917,6 +946,7 @@ export const restoreResumeHistory = async (
     resume.history.push({
       title: resume.title,
       ...(resume.summary !== undefined ? { summary: resume.summary } : {}),
+      ...(resume.templateId !== undefined ? { templateId: resume.templateId } : {}),
       content: cloneSnapshotValue(resume.content),
       themeConfig: cloneSnapshotValue(resume.themeConfig),
       updatedAt: new Date()
@@ -932,6 +962,9 @@ export const restoreResumeHistory = async (
     resume.content = targetSnapshot.content;
     if ('themeConfig' in targetSnapshot) {
       resume.themeConfig = targetSnapshot.themeConfig;
+    }
+    if (typeof targetSnapshot.templateId === 'string' && targetSnapshot.templateId.trim()) {
+      resume.templateId = targetSnapshot.templateId;
     }
     if (typeof targetSnapshot.title === 'string' && targetSnapshot.title.trim()) {
       resume.title = targetSnapshot.title;

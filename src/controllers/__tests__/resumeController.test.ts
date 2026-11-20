@@ -80,17 +80,19 @@ describe('resumeController - themeConfig & undo support', () => {
   });
 
   describe('undoResume', () => {
-    it('restores previous themeConfig from history', async () => {
+    it('restores previous themeConfig and templateId from history', async () => {
       const previousTheme = { primaryColor: '#1e293b', sectionSpacing: 'normal' };
       const currentTheme = { primaryColor: '#dc2626', sectionSpacing: 'spacious' };
 
       const mockDoc: any = {
         _id: 'resume123',
         userId: 'user123',
+        templateId: 'executive',
         content: { basics: { name: 'Alice Current' } },
         themeConfig: currentTheme,
         history: [
           {
+            templateId: 'classic',
             content: { basics: { name: 'Alice Previous' } },
             themeConfig: previousTheme,
             updatedAt: new Date(),
@@ -106,6 +108,7 @@ describe('resumeController - themeConfig & undo support', () => {
       expect(mockDoc.history).toHaveLength(0);
       expect(mockDoc.content).toEqual({ basics: { name: 'Alice Previous' } });
       expect(mockDoc.themeConfig).toEqual(previousTheme);
+      expect(mockDoc.templateId).toBe('classic');
       expect(mockDoc.save).toHaveBeenCalled();
       expect(mockRes.json).toHaveBeenCalledWith(
         expect.objectContaining({

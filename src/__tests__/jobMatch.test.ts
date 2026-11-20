@@ -56,6 +56,26 @@ describe('analyzeJobMatch', () => {
     expect(result.score).toBeGreaterThanOrEqual(85);
     expect(result.label).toBe('Excellent match');
   });
+
+  it('maps missing JD skills to verified adjacent skills under relatedExperience without fabricating tools', () => {
+    const result = analyzeJobMatch(resume, jd, 'Senior Frontend Engineer');
+
+    // Resume has React, TypeScript, Jest, Redux, REST APIs; JD wants GraphQL, Next.js, AWS
+    const graphqlRelated = result.relatedExperience.find((item) => item.keyword === 'GraphQL');
+    expect(graphqlRelated).toBeDefined();
+    expect(graphqlRelated?.relatedSkills).toEqual(expect.arrayContaining(['REST APIs', 'TypeScript']));
+    expect(graphqlRelated?.guidance).toMatch(/Do not list GraphQL unless you have used it/i);
+    expect(graphqlRelated?.guidance).toMatch(/Work Experience or Project bullets/i);
+    expect(graphqlRelated?.guidance).toMatch(/iCIMS/i);
+
+    const nextRelated = result.relatedExperience.find((item) => item.keyword === 'Next.js');
+    expect(nextRelated).toBeDefined();
+    expect(nextRelated?.relatedSkills).toEqual(['React']);
+
+    // Resume has NO cloud/container tools, so AWS must NOT fabricate relatedExperience
+    const awsRelated = result.relatedExperience.find((item) => item.keyword === 'AWS');
+    expect(awsRelated).toBeUndefined();
+  });
 });
 
 describe('POST /api/resumes/:resumeId/job-match', () => {
@@ -69,8 +89,10 @@ describe('POST /api/resumes/:resumeId/job-match', () => {
     app.use(errorHandler);
   });
 
-  it('returns the analysis for the caller\'s resume', async () => {
-    const findOne = jest.spyOn(Resume, 'findOne').mockResolvedValue({ ...resume, toObject: () => resume } as any);
+  it('returns the analysis for the caller\'s resume and persists latest atsScore', async () => {
+    const saveMock = jest.fn().mockResolvedValue(true);
+    const resumeDoc: any = { ...resume, atsScore: null, toObject: () => resume, save: saveMock };
+    const findOne = jest.spyOn(Resume, 'findOne').mockResolvedValue(resumeDoc);
 
     const res = await request(app).post('/api/resumes/r1/job-match').send({ jobDescription: jd, jobTitle: 'Frontend Engineer' });
 
@@ -78,6 +100,9 @@ describe('POST /api/resumes/:resumeId/job-match', () => {
     expect(findOne).toHaveBeenCalledWith({ _id: 'r1', userId: 'owner-1' });
     expect(res.body.data.score).toEqual(expect.any(Number));
     expect(res.body.data.missingKeywords.length).toBeGreaterThan(0);
+    expect(Array.isArray(res.body.data.relatedExperience)).toBe(true);
+    expect(resumeDoc.atsScore).toBe(res.body.data.score);
+    expect(saveMock).toHaveBeenCalledTimes(1);
   });
 
   it('rejects a too-short job description', async () => {
