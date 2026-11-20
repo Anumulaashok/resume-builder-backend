@@ -27,6 +27,7 @@
     "mongoose": "^7.5.0",
     "morgan": "^1.10.0",
     "multer": "^2.5.0",
+    "posthog-node": "^6.0.5",
     "serverless-http": "^4.0.0",
     "superagent": "^9.0.0",
     "swagger-jsdoc": "^6.2.8",

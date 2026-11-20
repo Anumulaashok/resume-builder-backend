@@ -1,10 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { Resume, IResume } from '../models/Resume';
 import { AppError } from '../utils/appError';
 import { AuthenticatedRequest } from '../types/express';
 import * as aiService from '../services/aiService';
 import { analyzeJobMatch } from '../services/jobMatchService';
+import { captureServerEvent } from '../services/telemetryService';
 import {
   build30DayViewsSeries,
   recordPublicResumeViewIfEligible,
@@ -30,6 +32,101 @@ const pickEditableFields = (body: Record<string, unknown> = {}) =>
     return acc;
   }, {});
 
+export function isTemporaryAiDraft(title: unknown, content: unknown): boolean {
+  const normalizedTitle = typeof title === 'string' ? title.trim() : '';
+  const sections = Array.isArray((content as { sections?: unknown[] } | undefined)?.sections)
+    ? ((content as { sections: unknown[] }).sections)
+    : [];
+  return normalizedTitle === 'AI Draft' && sections.length === 0;
+}
+
+export function isResumeCompleted(
+  title: unknown,
+  summary: unknown,
+  content: unknown
+): boolean {
+  if (isTemporaryAiDraft(title, content)) {
+    return false;
+  }
+
+  const contentObj = (content || {}) as {
+    basics?: { name?: unknown; email?: unknown; summary?: unknown };
+    sections?: Array<{ content?: unknown[] }>;
+  };
+  const basics = contentObj.basics || {};
+  const hasBasicsIdentity = Boolean(
+    (typeof basics.name === 'string' && basics.name.trim()) ||
+      (typeof basics.email === 'string' && basics.email.trim())
+  );
+  if (!hasBasicsIdentity) {
+    return false;
+  }
+
+  const hasSummary = Boolean(
+    (typeof summary === 'string' && summary.trim().length > 0) ||
+      (typeof basics.summary === 'string' && basics.summary.trim().length > 0)
+  );
+  const sections = Array.isArray(contentObj.sections) ? contentObj.sections : [];
+  const populatedSectionCount = sections.filter(
+    (sec) => Array.isArray(sec?.content) && sec.content.length > 0
+  ).length;
+
+  return hasSummary || populatedSectionCount > 0;
+}
+
+function canRunModelQuery(model: unknown, method: string): boolean {
+  const fn = (model as Record<string, unknown>)?.[method] as
+    | { _isMockFunction?: boolean }
+    | undefined;
+  return mongoose.connection.readyState === 1 || Boolean(fn?._isMockFunction);
+}
+
+async function emitFirstResumeTimingIfEligible(
+  user: AuthenticatedRequest['user'],
+  resume: { _id?: unknown; templateId?: string; createdAt?: Date | string }
+): Promise<void> {
+  if (!user?._id) return;
+
+  let priorCount: number | null = null;
+  if (canRunModelQuery(Resume, 'countDocuments')) {
+    try {
+      const filter: Record<string, unknown> = {
+        userId: user._id,
+        title: { $ne: 'AI Draft' }
+      };
+      if (resume._id !== undefined) {
+        filter._id = { $ne: resume._id };
+      }
+      priorCount = await Resume.countDocuments(filter);
+    } catch {
+      priorCount = null;
+    }
+  }
+
+  const userCreatedRaw = (user as unknown as { createdAt?: Date | string }).createdAt;
+  if (priorCount !== null && priorCount > 0) {
+    return;
+  }
+  if (priorCount === null && !userCreatedRaw) {
+    return;
+  }
+
+  const userCreatedMs = userCreatedRaw ? new Date(userCreatedRaw).getTime() : NaN;
+  const resumeCreatedMs = resume.createdAt
+    ? new Date(resume.createdAt).getTime()
+    : Date.now();
+  const durationMs = Number.isFinite(userCreatedMs)
+    ? Math.max(0, resumeCreatedMs - userCreatedMs)
+    : 0;
+
+  captureServerEvent(user._id, 'time_to_first_resume', {
+    resume_id: resume._id ? String(resume._id) : undefined,
+    template_id: resume.templateId || 'modern',
+    duration_ms: durationMs,
+    duration_seconds: Math.round(durationMs / 1000)
+  });
+}
+
 // @desc    Create a new resume
 // @route   POST /api/resumes
 // @access  Private (Needs Auth Middleware)
@@ -51,6 +148,33 @@ export const createResume = async (
       ...pickEditableFields(req.body),
       userId: req.user._id
     });
+
+    const isTempDraft =
+      Boolean((req.body as Record<string, unknown>).isTemporaryDraft) ||
+      isTemporaryAiDraft(resume.title, resume.content);
+
+    if (!isTempDraft) {
+      const sectionCount = Array.isArray(resume.content?.sections)
+        ? resume.content.sections.length
+        : 0;
+
+      captureServerEvent(req.user._id, 'resume_created', {
+        resume_id: resume._id ? String(resume._id) : undefined,
+        template_id: resume.templateId || 'modern',
+        section_count: sectionCount,
+        creation_mode: 'direct'
+      });
+
+      await emitFirstResumeTimingIfEligible(req.user, resume);
+
+      if (isResumeCompleted(resume.title, resume.summary, resume.content)) {
+        captureServerEvent(req.user._id, 'resume_completed', {
+          resume_id: resume._id ? String(resume._id) : undefined,
+          template_id: resume.templateId || 'modern',
+          section_count: sectionCount
+        });
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -222,8 +346,48 @@ export const updateResume = async (
       }
     }
 
+    const wasTempDraft = isTemporaryAiDraft(
+      existingResume.title,
+      existingResume.content
+    );
+    const wasCompleted = isResumeCompleted(
+      existingResume.title,
+      existingResume.summary,
+      existingResume.content
+    );
+    const confirmingAiDraft = Boolean(req.body?.confirmAiDraft);
+
     Object.assign(existingResume, pickEditableFields(req.body));
     const resume = await existingResume.save();
+
+    const isNowTempDraft = isTemporaryAiDraft(resume.title, resume.content);
+    const isNowCompleted = isResumeCompleted(
+      resume.title,
+      resume.summary,
+      resume.content
+    );
+    const sectionCount = Array.isArray(resume.content?.sections)
+      ? resume.content.sections.length
+      : 0;
+
+    if ((wasTempDraft || confirmingAiDraft) && !isNowTempDraft) {
+      captureServerEvent(req.user?._id, 'resume_created', {
+        resume_id: resume._id ? String(resume._id) : undefined,
+        template_id: resume.templateId || 'modern',
+        section_count: sectionCount,
+        creation_mode: confirmingAiDraft ? 'ai_accepted' : 'draft_promoted'
+      });
+
+      await emitFirstResumeTimingIfEligible(req.user, resume);
+    }
+
+    if (isNowCompleted && (!wasCompleted || confirmingAiDraft)) {
+      captureServerEvent(req.user?._id, 'resume_completed', {
+        resume_id: resume._id ? String(resume._id) : undefined,
+        template_id: resume.templateId || 'modern',
+        section_count: sectionCount
+      });
+    }
 
     res.json({
       success: true,
@@ -746,9 +910,35 @@ export const analyzeResumeJobMatch = async (
     }
 
     const resumeData = resume.toObject ? resume.toObject() : resume;
+    const matchResult = analyzeJobMatch(resumeData, jobDescription, jobTitle);
+    const trimmedLength = jobDescription.trim().length;
+    const jdLengthBucket =
+      trimmedLength < 500 ? 'short' : trimmedLength < 2000 ? 'medium' : 'long';
+
+    captureServerEvent(req.user?._id, 'jd_analyzed', {
+      resume_id: resume._id ? String(resume._id) : undefined,
+      template_id: resumeData.templateId || 'modern',
+      match_score: matchResult.score,
+      matched_keyword_count: matchResult.totals.matched,
+      missing_keyword_count: matchResult.missingKeywords.length,
+      required_keyword_count: matchResult.totals.required,
+      jd_length_bucket: jdLengthBucket,
+      has_job_title: Boolean(typeof jobTitle === 'string' && jobTitle.trim())
+    });
+
+    captureServerEvent(req.user?._id, 'ats_analysis_completed', {
+      resume_id: resume._id ? String(resume._id) : undefined,
+      template_id: resumeData.templateId || 'modern',
+      score: matchResult.score,
+      skills_score: matchResult.breakdown.skills,
+      experience_score: matchResult.breakdown.experience,
+      title_score: matchResult.breakdown.title,
+      suggestion_count: matchResult.suggestions.length
+    });
+
     res.json({
       success: true,
-      data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
+      data: matchResult
     });
   } catch (error) {
     next(error);
@@ -781,6 +971,27 @@ export const exportResumeTxt = async (
     const plainText = renderResumePlainText(resumeData);
     const txtBuffer = Buffer.from(plainText, 'utf-8');
     const filename = buildSafeExportFilename(resumeData);
+
+    const createdAtRaw = (resumeData as { createdAt?: Date | string }).createdAt;
+    const createdAtMs = createdAtRaw ? new Date(createdAtRaw).getTime() : NaN;
+    const exportDurationMs = Number.isFinite(createdAtMs)
+      ? Math.max(0, Date.now() - createdAtMs)
+      : 0;
+
+    captureServerEvent(req.user._id, 'resume_exported', {
+      resume_id: resume._id ? String(resume._id) : undefined,
+      template_id: resumeData.templateId || 'modern',
+      format: 'txt',
+      byte_length: txtBuffer.length
+    });
+
+    captureServerEvent(req.user._id, 'time_to_export', {
+      resume_id: resume._id ? String(resume._id) : undefined,
+      template_id: resumeData.templateId || 'modern',
+      format: 'txt',
+      duration_ms: exportDurationMs,
+      duration_seconds: Math.round(exportDurationMs / 1000)
+    });
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

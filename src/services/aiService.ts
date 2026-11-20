@@ -58,7 +58,7 @@ export const analyzeResumePrompt = async (prompt: string): Promise<AIResumeResul
     messages: [
       {
         role: 'system',
-        content: `You are an expert resume builder. Extract the user's prompt into a structured JSON resume. The JSON must exactly match this schema:
+        content: `You are an expert resume builder. Extract the user's prompt into a structured JSON resume grounded strictly in the facts provided by the user. Never invent employers, job titles, degrees, credentials, dates, or unverified metrics. The JSON must exactly match this schema:
 {
   "title": "String",
   "summary": "String",
