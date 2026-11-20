@@ -14,11 +14,94 @@ export const signupValidation = [
   body('password').isLength({ min: 6 })
 ];
 
+const DANGEROUS_SCHEME_PATTERN = /^(javascript|data|vbscript|file):/i;
+const GENERIC_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
+export const validateOptionalExternalLink = (value: unknown): boolean => {
+  if (value === undefined || value === null || value === '') {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    throw new Error('Link must be a string');
+  }
+
+  // Strip ASCII control characters before checking schemes to prevent bypasses like "java\tscript:"
+  const controlCleaned = value.replace(/[\u0000-\u001F\u007F]+/g, '');
+  const trimmed = controlCleaned.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  if (trimmed.length > 2048) {
+    throw new Error('Link must be 2048 characters or fewer');
+  }
+
+  if (DANGEROUS_SCHEME_PATTERN.test(trimmed)) {
+    throw new Error('Unsafe URL scheme is not allowed');
+  }
+
+  if (/\s/.test(value.trim())) {
+    throw new Error('Link must be a valid URL without spaces');
+  }
+
+  if (GENERIC_SCHEME_PATTERN.test(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+    throw new Error('Link must use http or https scheme');
+  }
+
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let parsed: URL;
+  try {
+    parsed = new URL(withProtocol);
+  } catch {
+    throw new Error('Invalid URL format');
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('Link must use http or https scheme');
+  }
+
+  const host = parsed.hostname;
+  if (
+    !host ||
+    host.startsWith('.') ||
+    host.endsWith('.') ||
+    host.includes('..') ||
+    (host !== 'localhost' && !/\.[a-zA-Z]{2,}$/.test(host))
+  ) {
+    throw new Error('Link must include a valid domain');
+  }
+
+  return true;
+};
+
 export const resumeValidation = [
   body('title').trim().notEmpty(),
   body('themeConfig').optional().isObject(),
   body('content.basics.name').trim().notEmpty(),
   body('content.basics.email').isEmail(),
+  body('content.basics.url').optional({ values: 'null' }).custom(validateOptionalExternalLink),
+  body('content.basics.website').optional({ values: 'null' }).custom(validateOptionalExternalLink),
+  body('content.basics.portfolioUrl').optional({ values: 'null' }).custom(validateOptionalExternalLink),
+  body('content.basics.linkedin').optional({ values: 'null' }).custom(validateOptionalExternalLink),
+  body('content.basics.github').optional({ values: 'null' }).custom(validateOptionalExternalLink),
+  body('content.basics.location')
+    .optional({ values: 'null' })
+    .custom((val) => typeof val === 'object' && val !== null && !Array.isArray(val))
+    .withMessage('location must be an object'),
+  body('content.basics.location.address').optional({ values: 'null' }).isString().isLength({ max: 300 }),
+  body('content.basics.location.city').optional({ values: 'null' }).isString().isLength({ max: 120 }),
+  body('content.basics.location.region').optional({ values: 'null' }).isString().isLength({ max: 120 }),
+  body('content.basics.location.countryCode').optional({ values: 'null' }).isString().isLength({ max: 100 }),
+  body('content.basics.location.postalCode').optional({ values: 'null' }).isString().isLength({ max: 40 }),
+  body('content.basics.profiles')
+    .optional({ values: 'null' })
+    .isArray({ max: 20 })
+    .withMessage('profiles must be an array of at most 20 links'),
+  body('content.basics.profiles.*.network').optional({ values: 'null' }).isString().isLength({ max: 100 }),
+  body('content.basics.profiles.*.username').optional({ values: 'null' }).isString().isLength({ max: 100 }),
+  body('content.basics.profiles.*.url')
+    .optional({ values: 'null' })
+    .custom(validateOptionalExternalLink),
   body('content.sections').isArray(),
   body('content.sectionOrder').isArray()
 ];
