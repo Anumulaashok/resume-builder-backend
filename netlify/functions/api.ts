@@ -3,6 +3,7 @@ process.env.NETLIFY = 'true';
 import serverless from 'serverless-http';
 import app from '../../src/app';
 import { connectDB } from '../../src/config/db.config';
+import { flushTelemetry } from '../../src/services/telemetryService';
 
 let isDbConnected = false;
 
@@ -46,7 +47,11 @@ export const handler = async (event: any, context: any) => {
     }
   }
 
-  return serverlessHandler(event, context);
+  try {
+    return await serverlessHandler(event, context);
+  } finally {
+    await flushTelemetry();
+  }
 };
 
 export default handler;

@@ -16,6 +16,11 @@ export interface IApplicationContact {
   role?: string;
 }
 
+export interface IStageHistoryEntry {
+  status: ApplicationStatus;
+  changedAt: Date;
+}
+
 export interface IJobApplication extends Document {
   userId: mongoose.Types.ObjectId;
   company: string;
@@ -25,6 +30,8 @@ export interface IJobApplication extends Document {
   status: ApplicationStatus;
   order: number;
   appliedAt?: Date | null;
+  reachedInterviewAt?: Date | null;
+  stageHistory: IStageHistoryEntry[];
   salary?: string;
   notes?: string;
   resumeId?: mongoose.Types.ObjectId | null;
@@ -42,6 +49,22 @@ const applicationContactSchema = new Schema<IApplicationContact>(
     name: { type: String, required: true, trim: true, maxlength: 200 },
     email: { type: String, trim: true, default: '', maxlength: 320 },
     role: { type: String, trim: true, default: '', maxlength: 200 }
+  },
+  { _id: false }
+);
+
+const stageHistoryEntrySchema = new Schema<IStageHistoryEntry>(
+  {
+    status: {
+      type: String,
+      enum: APPLICATION_STATUSES,
+      required: true
+    },
+    changedAt: {
+      type: Date,
+      required: true,
+      default: Date.now
+    }
   },
   { _id: false }
 );
@@ -91,6 +114,14 @@ const jobApplicationSchema = new Schema<IJobApplication>(
     appliedAt: {
       type: Date,
       default: null
+    },
+    reachedInterviewAt: {
+      type: Date,
+      default: null
+    },
+    stageHistory: {
+      type: [stageHistoryEntrySchema],
+      default: []
     },
     salary: {
       type: String,

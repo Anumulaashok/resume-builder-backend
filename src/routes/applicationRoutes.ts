@@ -13,7 +13,8 @@ import {
   createApplication,
   updateApplication,
   deleteApplication,
-  reorderApplications
+  reorderApplications,
+  getApplicationAttribution
 } from '../controllers/applicationController';
 import { asyncHandler } from '../utils/asyncHandler';
 
@@ -26,6 +27,9 @@ router
   .route('/')
   .get(validate(listApplicationsValidation), asyncHandler(getApplications))
   .post(validate(createApplicationValidation), asyncHandler(createApplication));
+
+// Summary and batch routes must precede /:id so they are never matched as an ID parameter
+router.get('/attribution', asyncHandler(getApplicationAttribution));
 
 // Batch reorder route must precede /:id so '/reorder' is never matched as an ID parameter
 router.patch(
