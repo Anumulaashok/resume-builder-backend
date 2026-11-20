@@ -719,7 +719,7 @@ export const getSharingStats = async (
 
 const MAX_JOB_DESCRIPTION_LENGTH = 20000;
 
-// @desc    Score a resume against a job description
+// @desc    Score a resume against a job description or run standalone ATS check
 // @route   POST /api/resumes/:resumeId/job-match
 // @access  Private (Needs Auth Middleware)
 export const analyzeResumeJobMatch = async (
@@ -730,10 +730,17 @@ export const analyzeResumeJobMatch = async (
   try {
     const { jobDescription, jobTitle } = req.body || {};
 
-    if (typeof jobDescription !== 'string' || jobDescription.trim().length < 30) {
+    if (jobDescription !== undefined && jobDescription !== null && typeof jobDescription !== 'string') {
+      throw new AppError('Job description must be a string', 400);
+    }
+
+    const normalizedJd = typeof jobDescription === 'string' ? jobDescription : '';
+    const trimmedJd = normalizedJd.trim();
+
+    if (trimmedJd.length > 0 && trimmedJd.length < 30) {
       throw new AppError('Job description must be at least 30 characters', 400);
     }
-    if (jobDescription.length > MAX_JOB_DESCRIPTION_LENGTH) {
+    if (normalizedJd.length > MAX_JOB_DESCRIPTION_LENGTH) {
       throw new AppError(`Job description must be under ${MAX_JOB_DESCRIPTION_LENGTH} characters`, 400);
     }
     if (jobTitle !== undefined && typeof jobTitle !== 'string') {
@@ -748,7 +755,7 @@ export const analyzeResumeJobMatch = async (
     const resumeData = resume.toObject ? resume.toObject() : resume;
     res.json({
       success: true,
-      data: analyzeJobMatch(resumeData, jobDescription, jobTitle)
+      data: analyzeJobMatch(resumeData, trimmedJd ? normalizedJd : '', jobTitle)
     });
   } catch (error) {
     next(error);
