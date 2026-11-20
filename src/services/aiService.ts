@@ -168,6 +168,35 @@ export interface CoverLetterGenerationInput {
       }>;
     };
   } | null;
+  careerProfile?: {
+    basics?: {
+      name?: string;
+      label?: string;
+      email?: string;
+      summary?: string;
+    };
+    experiences?: Array<{
+      company?: string;
+      name?: string;
+      position?: string;
+      description?: string;
+      highlights?: string[];
+      technologies?: string[];
+      metrics?: string[];
+    }>;
+    projects?: Array<{
+      name?: string;
+      description?: string;
+      highlights?: string[];
+      technologies?: string[];
+      metrics?: string[];
+    }>;
+    skills?: Array<{
+      name?: string;
+      keywords?: string[];
+      subSkills?: Array<{ name?: string }>;
+    }>;
+  } | null;
   recipient?: {
     name?: string;
     company?: string;
@@ -178,12 +207,38 @@ export interface CoverLetterGenerationInput {
   prompt?: string;
 }
 
-const extractResumeHighlights = (resume?: CoverLetterGenerationInput['resume']) => {
+const METRIC_SIGNAL_REGEX =
+  /(?:\b\d+(?:\.\d+)?\s*(?:%|x|ms|s|sec|seconds|mins?|hours?|days?|k|m|b|tb|gb|mb|rps|qps|users?|clients?|customers?|engineers?|developers?|requests?|services?|pipelines?|repos?|countries|teams?)\b|\$\s*\d+(?:[.,]\d+)?\s*(?:k|m|b)?)/i;
+
+const dedupePreserveOrder = (items: string[], limit: number): string[] => {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of items) {
+    const clean = (raw || '').trim().replace(/^[•●◦▪▸►✓✔*–—-]\s*/, '');
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(clean);
+    }
+    if (out.length >= limit) break;
+  }
+  return out;
+};
+
+export const extractResumeHighlights = (
+  resume?: CoverLetterGenerationInput['resume'],
+  careerProfile?: CoverLetterGenerationInput['careerProfile']
+) => {
   const basics = resume?.content?.basics || {};
+  const profileBasics = careerProfile?.basics || {};
   const sections = Array.isArray(resume?.content?.sections) ? resume!.content!.sections! : [];
 
   const skills: string[] = [];
   const roles: string[] = [];
+  const highlights: string[] = [];
+  const metrics: string[] = [];
+  const projectSummaries: string[] = [];
 
   for (const section of sections) {
     const sectionType = String(section?.type || section?.id || '').toLowerCase();
@@ -212,22 +267,134 @@ const extractResumeHighlights = (resume?: CoverLetterGenerationInput['resume']) 
         } else if (pos || org) {
           roles.push(pos || org);
         }
+        if (Array.isArray(item.highlights)) {
+          for (const h of item.highlights) {
+            if (typeof h === 'string' && h.trim()) {
+              highlights.push(h.trim());
+              if (METRIC_SIGNAL_REGEX.test(h)) {
+                metrics.push(h.trim());
+              }
+            }
+          }
+        }
+      }
+    } else if (sectionType.includes('project')) {
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        const pName = typeof item.name === 'string' ? item.name.trim() : '';
+        if (Array.isArray(item.highlights)) {
+          for (const h of item.highlights) {
+            if (typeof h === 'string' && h.trim()) {
+              const labeled = pName ? `${pName}: ${h.trim()}` : h.trim();
+              highlights.push(labeled);
+              if (METRIC_SIGNAL_REGEX.test(h)) {
+                metrics.push(labeled);
+              }
+            }
+          }
+        } else if (pName && typeof item.description === 'string' && item.description.trim()) {
+          projectSummaries.push(`${pName}: ${item.description.trim()}`);
+        }
+      }
+    }
+  }
+
+  // Enrich from approved CareerProfile (critical when no single resume is linked, and adds verified metrics)
+  if (careerProfile) {
+    for (const exp of careerProfile.experiences || []) {
+      const pos = typeof exp?.position === 'string' ? exp.position.trim() : '';
+      const org =
+        typeof exp?.company === 'string' && exp.company.trim()
+          ? exp.company.trim()
+          : typeof exp?.name === 'string'
+            ? exp.name.trim()
+            : '';
+      const roleLabel = pos && org ? `${pos} at ${org}` : pos || org;
+      if (roleLabel) {
+        roles.push(roleLabel);
+      }
+      for (const m of exp?.metrics || []) {
+        if (typeof m === 'string' && m.trim()) {
+          metrics.push(roleLabel ? `${m.trim()} (${org || pos})` : m.trim());
+        }
+      }
+      for (const h of exp?.highlights || []) {
+        if (typeof h === 'string' && h.trim()) {
+          highlights.push(h.trim());
+          if (METRIC_SIGNAL_REGEX.test(h)) {
+            metrics.push(h.trim());
+          }
+        }
+      }
+    }
+
+    for (const proj of careerProfile.projects || []) {
+      const pName = typeof proj?.name === 'string' ? proj.name.trim() : '';
+      for (const m of proj?.metrics || []) {
+        if (typeof m === 'string' && m.trim()) {
+          metrics.push(pName ? `${pName} — ${m.trim()}` : m.trim());
+        }
+      }
+      for (const h of proj?.highlights || []) {
+        if (typeof h === 'string' && h.trim()) {
+          const labeled = pName ? `${pName} — ${h.trim()}` : h.trim();
+          highlights.push(labeled);
+          if (METRIC_SIGNAL_REGEX.test(h)) {
+            metrics.push(labeled);
+          }
+        }
+      }
+      if (pName && typeof proj?.description === 'string' && proj.description.trim()) {
+        projectSummaries.push(`${pName}: ${proj.description.trim()}`);
+      }
+    }
+
+    for (const sk of careerProfile.skills || []) {
+      if (sk?.name && sk.name.trim()) {
+        skills.push(sk.name.trim());
+      }
+      for (const kw of sk?.keywords || []) {
+        if (typeof kw === 'string' && kw.trim()) {
+          skills.push(kw.trim());
+        }
       }
     }
   }
 
   return {
-    candidateRole: basics.label?.trim() || resume?.title?.trim() || '',
-    summary: (resume?.summary || (basics as any)?.summary || '').toString().trim(),
-    topSkills: Array.from(new Set(skills)).slice(0, 5),
-    recentRoles: roles.slice(0, 2)
+    candidateName: basics.name?.trim() || profileBasics.name?.trim() || '',
+    candidateRole:
+      basics.label?.trim() ||
+      profileBasics.label?.trim() ||
+      resume?.title?.trim() ||
+      '',
+    summary: (
+      resume?.summary ||
+      (basics as any)?.summary ||
+      profileBasics.summary ||
+      ''
+    )
+      .toString()
+      .trim(),
+    topSkills: dedupePreserveOrder(skills, 10),
+    recentRoles: dedupePreserveOrder(roles, 4),
+    verifiedHighlights: dedupePreserveOrder(highlights, 6),
+    verifiedMetrics: dedupePreserveOrder(metrics, 5),
+    projectSummaries: dedupePreserveOrder(projectSummaries, 4)
   };
 };
 
 const buildPlaceholderCoverLetterBody = (input: CoverLetterGenerationInput): string => {
   const targetRole = input.jobTitle?.trim() || 'the open position';
   const company = input.recipient?.company?.trim() || 'your organization';
-  const { candidateRole, summary, topSkills, recentRoles } = extractResumeHighlights(input.resume);
+  const {
+    candidateRole,
+    summary,
+    topSkills,
+    recentRoles,
+    verifiedHighlights,
+    verifiedMetrics
+  } = extractResumeHighlights(input.resume, input.careerProfile);
 
   const openingRoleClause = candidateRole
     ? ` as a ${candidateRole}`
@@ -236,13 +403,21 @@ const buildPlaceholderCoverLetterBody = (input: CoverLetterGenerationInput): str
 
   const experienceParts: string[] = [];
   if (recentRoles.length > 0) {
-    experienceParts.push(`In my experience as ${recentRoles.join(' and ')}, I have focused on delivering reliable, high-impact outcomes.`);
+    experienceParts.push(`In my experience as ${recentRoles.slice(0, 3).join(' and ')}, I have focused on delivering reliable, high-impact outcomes.`);
   } else if (summary) {
     const conciseSummary = summary.length > 220 ? `${summary.slice(0, 217).trimEnd()}...` : summary;
     experienceParts.push(conciseSummary);
   }
+  const groundedAchievements =
+    verifiedMetrics.length > 0
+      ? verifiedMetrics.slice(0, 3)
+      : verifiedHighlights.slice(0, 3);
+  if (groundedAchievements.length > 0) {
+    const cleaned = groundedAchievements.map((item) => item.replace(/[.]+$/, '')).join('; ');
+    experienceParts.push(`Notable verified highlights include: ${cleaned}.`);
+  }
   if (topSkills.length > 0) {
-    experienceParts.push(`My core strengths include ${topSkills.join(', ')}.`);
+    experienceParts.push(`My core strengths include ${topSkills.slice(0, 8).join(', ')}.`);
   }
   if (input.jobDescription && input.jobDescription.trim()) {
     const cleanJd = input.jobDescription.trim().replace(/\s+/g, ' ');
@@ -275,12 +450,31 @@ export const generateCoverLetterBody = async (
     return buildPlaceholderCoverLetterBody(input);
   }
 
-  const { candidateRole, summary, topSkills, recentRoles } = extractResumeHighlights(input.resume);
+  const {
+    candidateName,
+    candidateRole,
+    summary,
+    topSkills,
+    recentRoles,
+    verifiedHighlights,
+    verifiedMetrics,
+    projectSummaries
+  } = extractResumeHighlights(input.resume, input.careerProfile);
+
   const resumeContextLines = [
-    input.resume?.content?.basics?.name ? `Candidate Name: ${input.resume.content.basics.name}` : '',
+    candidateName ? `Candidate Name: ${candidateName}` : '',
     candidateRole ? `Current Title: ${candidateRole}` : '',
     summary ? `Summary: ${summary}` : '',
     recentRoles.length > 0 ? `Experience: ${recentRoles.join('; ')}` : '',
+    verifiedMetrics.length > 0
+      ? `Verified Metrics & Impact:\n- ${verifiedMetrics.join('\n- ')}`
+      : '',
+    verifiedHighlights.length > 0
+      ? `Verified Career Highlights:\n- ${verifiedHighlights.join('\n- ')}`
+      : '',
+    projectSummaries.length > 0
+      ? `Projects:\n- ${projectSummaries.join('\n- ')}`
+      : '',
     topSkills.length > 0 ? `Skills: ${topSkills.join(', ')}` : ''
   ].filter(Boolean);
 
@@ -288,7 +482,9 @@ export const generateCoverLetterBody = async (
     input.jobTitle ? `Target Job Title: ${input.jobTitle}` : '',
     input.recipient?.company ? `Target Company: ${input.recipient.company}` : '',
     input.recipient?.name ? `Recipient: ${input.recipient.name}` : '',
-    resumeContextLines.length > 0 ? `Linked Resume Facts:\n${resumeContextLines.join('\n')}` : '',
+    resumeContextLines.length > 0
+      ? `Verified Candidate Facts (Resume & Career Profile):\n${resumeContextLines.join('\n')}`
+      : '',
     input.jobDescription ? `Job Description:\n${input.jobDescription}` : '',
     input.prompt ? `Additional Instructions:\n${input.prompt}` : ''
   ].filter(Boolean);
@@ -299,7 +495,7 @@ export const generateCoverLetterBody = async (
       {
         role: 'system',
         content:
-          'You write concise, professional cover letter body paragraphs grounded strictly in the provided resume facts and job description. Do not invent employers, metrics, or credentials. Omit the greeting and signature—return ONLY 3 to 4 plain-text body paragraphs separated by blank lines (\\n\\n) or JSON {"body": "..."}.'
+          'You write concise, professional cover letter body paragraphs grounded strictly in the provided verified candidate facts and job description. Cite concrete verified achievements and metrics when relevant, and NEVER invent or fabricate employers, dates, skills, metrics, or credentials. Omit the greeting and signature—return ONLY 3 to 4 plain-text body paragraphs separated by blank lines (\\n\\n) or JSON {"body": "..."}.'
       },
       {
         role: 'user',

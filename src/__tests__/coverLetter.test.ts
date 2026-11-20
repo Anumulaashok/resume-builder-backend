@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import coverLetterRoutes from '../routes/coverLetterRoutes';
 import { CoverLetter } from '../models/CoverLetter';
 import { Resume } from '../models/Resume';
+import { CareerProfile } from '../models/CareerProfile';
 import { User } from '../models/User';
 import { errorHandler } from '../middleware/errorHandler';
 
@@ -451,6 +452,107 @@ describe('Cover Letters API (/api/cover-letters)', () => {
       expect(res.body.data.body).toBe(
         'Paragraph one from LLM.\n\nParagraph two tailored to Northstar Systems.'
       );
+    });
+
+    it('grounds cover letter generation in verified CareerProfile highlights and metrics when no single resume is linked', async () => {
+      const doc = makeLetterDoc({ resumeId: null, body: '' });
+      jest.spyOn(CoverLetter, 'findOne').mockResolvedValue(doc as any);
+      const resumeFindSpy = jest.spyOn(Resume, 'findOne');
+      jest.spyOn(CareerProfile, 'findOne').mockResolvedValue({
+        userId: ownerId,
+        basics: {
+          name: 'Ashok Anumula',
+          label: 'Principal Platform Engineer',
+          summary: 'Platform leader building resilient cloud systems.'
+        },
+        experiences: [
+          {
+            id: 'exp-1',
+            company: 'CloudCore Inc',
+            position: 'Staff Platform Engineer',
+            highlights: [
+              'Reduced p99 checkout latency by 38% across 25M daily transactions'
+            ],
+            metrics: [
+              'Reduced p99 checkout latency by 38% across 25M daily transactions'
+            ],
+            technologies: ['TypeScript', 'Go']
+          }
+        ],
+        projects: [
+          {
+            id: 'proj-1',
+            name: 'EdgeMesh',
+            description: 'Zero-downtime service mesh rollout controller',
+            highlights: ['Automated canary rollouts across 140 microservices'],
+            metrics: ['Automated canary rollouts across 140 microservices'],
+            technologies: ['Kubernetes']
+          }
+        ],
+        skills: [
+          { id: 'sk-1', name: 'TypeScript', keywords: ['React', 'Node.js'] },
+          { id: 'sk-2', name: 'Kubernetes', keywords: [] }
+        ]
+      } as any);
+
+      const res = await request(app)
+        .post(`/api/cover-letters/${letterId}/generate`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({})
+        .expect(200);
+
+      expect(resumeFindSpy).not.toHaveBeenCalled();
+      expect(CareerProfile.findOne).toHaveBeenCalledWith({ userId: ownerId });
+      const body: string = res.body.data.body;
+      expect(body).toContain('Principal Platform Engineer');
+      expect(body).toContain('Staff Platform Engineer at CloudCore Inc');
+      expect(body).toContain('Reduced p99 checkout latency by 38% across 25M daily transactions');
+      expect(body).toContain('Automated canary rollouts across 140 microservices');
+    });
+
+    it('includes CareerProfile verified metrics and highlights in LLM prompt payload when resumeId is null', async () => {
+      process.env.LLAMA_API_URL = 'https://llm.example.internal/v1/chat/completions';
+      const doc = makeLetterDoc({ resumeId: null, body: '' });
+      jest.spyOn(CoverLetter, 'findOne').mockResolvedValue(doc as any);
+      jest.spyOn(CareerProfile, 'findOne').mockResolvedValue({
+        userId: ownerId,
+        basics: {
+          name: 'Ashok Anumula',
+          label: 'Principal Platform Engineer'
+        },
+        experiences: [
+          {
+            id: 'exp-1',
+            company: 'CloudCore Inc',
+            position: 'Staff Platform Engineer',
+            highlights: ['Cut infrastructure spend by $420k per year'],
+            metrics: ['Cut infrastructure spend by $420k per year']
+          }
+        ],
+        projects: [],
+        skills: [{ id: 'sk-1', name: 'Go', keywords: ['gRPC'] }]
+      } as any);
+
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: 'Grounded LLM draft citing $420k savings.' } }]
+        })
+      } as any);
+
+      await request(app)
+        .post(`/api/cover-letters/${letterId}/generate`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({})
+        .expect(200);
+
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+      const fetchInit = (global.fetch as jest.Mock).mock.calls[0][1];
+      const parsedPayload = JSON.parse(fetchInit.body);
+      const userMessage: string = parsedPayload.messages[1].content;
+      expect(userMessage).toContain('Staff Platform Engineer at CloudCore Inc');
+      expect(userMessage).toContain('Cut infrastructure spend by $420k per year');
+      expect(userMessage).toContain('Go, gRPC');
     });
   });
 });
