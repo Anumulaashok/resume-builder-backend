@@ -620,14 +620,18 @@ export function formatItemDateRange(
   const start = formatDateWithPattern(item.startDate, dateFormat);
   const end = formatDateWithPattern(item.endDate, dateFormat);
   const singleDate = formatDateWithPattern(item.date, dateFormat);
+  const rawEnd = formatResumeDate(item.endDate);
+  const isOngoing =
+    Boolean(item.current || item.isCurrent) || /^present$/i.test(rawEnd.trim());
 
   if (start) {
-    const rawEnd = formatResumeDate(item.endDate);
-    const displayEnd = item.current || item.isCurrent || !rawEnd ? 'Present' : end;
-    return `${start} - ${displayEnd}`;
+    if (isOngoing) {
+      return `${start} - Present`;
+    }
+    return end ? `${start} - ${end}` : start;
   }
 
-  if (item.current || item.isCurrent) {
+  if (isOngoing) {
     return 'Present';
   }
 
@@ -1100,14 +1104,21 @@ function formatPlainTextSection(section: PreparedSection): string {
       }
     } else {
       const primary = sanitizeText(
-        raw.title ??
-          raw.name ??
-          raw.course ??
-          raw.language ??
-          raw.organization ??
-          raw.institution ??
-          raw.company ??
-          raw.degree,
+        section.kind === 'publications' || section.kind === 'custom'
+          ? raw.title ??
+              raw.name ??
+              raw.organization ??
+              raw.institution ??
+              raw.company ??
+              raw.degree
+          : raw.name ??
+              raw.title ??
+              raw.course ??
+              raw.language ??
+              raw.organization ??
+              raw.institution ??
+              raw.company ??
+              raw.degree,
         160
       );
       const secondary = sanitizeText(
@@ -1117,10 +1128,17 @@ function formatPlainTextSection(section: PreparedSection): string {
           raw.issuer ??
           raw.awarder ??
           raw.publisher ??
-          (raw.title && raw.company ? raw.company : '') ??
-          (raw.course && raw.institution ? raw.institution : '') ??
-          raw.fluency ??
-          (typeof raw.level === 'string' ? raw.level : ''),
+          (raw.title && raw.company ? raw.company : undefined) ??
+          (raw.name && raw.institution ? raw.institution : undefined) ??
+          (raw.course && raw.institution ? raw.institution : undefined) ??
+          (typeof raw.level === 'string'
+            ? raw.level
+            : typeof raw.level === 'number'
+            ? raw.level <= 5
+              ? `Level ${raw.level}/5`
+              : `${raw.level}%`
+            : undefined) ??
+          raw.fluency,
         160
       );
       const contact = sanitizeText(raw.contact ?? raw.email ?? raw.phone, 160);

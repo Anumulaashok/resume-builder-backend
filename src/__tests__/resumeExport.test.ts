@@ -314,9 +314,70 @@ describe('ATS Plain Text Export Endpoint (GET /api/resumes/:resumeId/export.txt)
           'MMM YYYY'
         )
       ).toBe('Apr 2022 - Nov 2024');
+      expect(
+        formatItemDateRange({ startDate: 'Mar 2023', endDate: '', current: false })
+      ).toBe('Mar 2023');
+      expect(
+        formatItemDateRange({ startDate: 'Jun 2022', endDate: '   ' })
+      ).toBe('Jun 2022');
+      expect(
+        formatItemDateRange({ startDate: 'Jan 2024', endDate: 'Present', current: false })
+      ).toBe('Jan 2024 - Present');
+      expect(
+        formatItemDateRange({ startDate: 'Jan 2024', endDate: '', current: true })
+      ).toBe('Jan 2024 - Present');
       expect(formatItemDateRange({ current: true })).toBe('Present');
       expect(formatItemDateRange({ dateRange: 'Spring 2023' })).toBe('Spring 2023');
       expect(formatItemDateRange({ period: 'Q1 2024 - Q3 2024' })).toBe('Q1 2024 - Q3 2024');
+
+      // End-to-end plain text export omits Present when endDate is empty and current is false
+      const singleStartResume = buildSampleResumeRecord({
+        content: {
+          basics: { name: 'Anumula Ashok' },
+          sections: [
+            {
+              id: 'sec-proj-single',
+              type: 'ProjectItem',
+              title: 'Projects',
+              content: [
+                {
+                  id: 'p-single',
+                  name: 'Hackathon Prototype',
+                  startDate: 'Mar 2023',
+                  endDate: '',
+                  current: false,
+                },
+                {
+                  id: 'p-ongoing',
+                  name: 'Active Platform',
+                  startDate: 'Jan 2025',
+                  endDate: '',
+                  current: true,
+                },
+              ],
+            },
+            {
+              id: 'sec-lang',
+              type: 'LanguageItem',
+              title: 'Languages',
+              content: [{ id: 'l-1', name: 'English', level: 'Native' }],
+            },
+            {
+              id: 'sec-award',
+              type: 'AwardItem',
+              title: 'Awards',
+              content: [{ id: 'a-1', name: 'Best Systems Paper', issuer: 'IEEE' }],
+            },
+          ],
+          sectionOrder: ['sec-proj-single', 'sec-lang', 'sec-award'],
+        },
+      });
+      const singleStartText = renderResumePlainText(singleStartResume);
+      expect(singleStartText).toContain('Mar 2023');
+      expect(singleStartText).not.toContain('Mar 2023 - Present');
+      expect(singleStartText).toContain('Jan 2025 - Present');
+      expect(singleStartText).toContain('English | Native');
+      expect(singleStartText).toContain('Best Systems Paper | IEEE');
 
       // End-to-end resume dateFormat via themeConfig
       const formattedResume = buildSampleResumeRecord({
