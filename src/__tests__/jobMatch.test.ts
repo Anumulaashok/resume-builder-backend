@@ -56,6 +56,180 @@ describe('analyzeJobMatch', () => {
     expect(result.score).toBeGreaterThanOrEqual(85);
     expect(result.label).toBe('Excellent match');
   });
+
+  it('returns score 0 and Low match when a job description yields zero extractable requirements', () => {
+    const noReqResult = analyzeJobMatch(
+      resume,
+      'You will go the extra mile and rest assured we express gratitude in spring.'
+    );
+    expect(noReqResult.totals).toEqual({ matched: 0, required: 0 });
+    expect(noReqResult.breakdown).toEqual({ skills: 0, experience: 0, title: 0 });
+    expect(noReqResult.score).toBe(0);
+    expect(noReqResult.label).toBe('Low match');
+
+    const withTitleNoReq = analyzeJobMatch(
+      resume,
+      'You will go the extra mile and rest assured we express gratitude in spring.',
+      'Senior Frontend Engineer'
+    );
+    expect(withTitleNoReq.totals.required).toBe(0);
+    expect(withTitleNoReq.score).toBe(0);
+    expect(withTitleNoReq.label).toBe('Low match');
+  });
+
+  it('excludes disabled sections and hidden items from matchedKeywords, breakdown, and score', () => {
+    const resumeWithHiddenContent = {
+      title: 'Software Resume',
+      summary: 'Focused on web user interfaces.',
+      content: {
+        basics: { name: 'Jane', email: 'jane@x.com', label: 'UI Developer' },
+        sections: [
+          {
+            id: 'skills-visible',
+            type: 'SkillItem',
+            title: 'Skills',
+            enabled: true,
+            content: [
+              { id: 's-1', name: 'React', enabled: true },
+              { id: 's-hidden', name: 'Kubernetes', enabled: false },
+            ],
+          },
+          {
+            id: 'skills-disabled-sec',
+            type: 'TechnicalSkillItem',
+            title: 'Technical Skills',
+            enabled: false,
+            content: [{ id: 'ts-1', name: 'Backend', technologies: ['GraphQL', 'PostgreSQL'] }],
+          },
+          {
+            id: 'work-sec',
+            type: 'WorkItem',
+            title: 'Work Experience',
+            enabled: true,
+            content: [
+              {
+                id: 'w-visible',
+                name: 'Visible Corp',
+                position: 'UI Developer',
+                description: 'Implemented accessible components in React.',
+                enabled: true,
+              },
+              {
+                id: 'w-hidden',
+                name: 'Hidden Corp',
+                position: 'Principal Backend Architect',
+                description: 'Designed distributed pipelines with Docker and telemetry pipelines.',
+                enabled: false,
+              },
+            ],
+          },
+        ],
+        sectionOrder: ['skills-visible', 'skills-disabled-sec', 'work-sec'],
+      },
+    };
+
+    const targetJd =
+      'Hiring a Principal Backend Architect to build distributed pipelines with React, Kubernetes, GraphQL, PostgreSQL, and Docker. Distributed pipelines experience required.';
+    const result = analyzeJobMatch(resumeWithHiddenContent, targetJd, 'Principal Backend Architect');
+
+    expect(result.matchedKeywords.map((k) => k.keyword)).toEqual(['React']);
+    expect(result.missingKeywords.map((k) => k.keyword)).toEqual(
+      expect.arrayContaining(['Kubernetes', 'GraphQL', 'PostgreSQL', 'Docker'])
+    );
+    expect(result.breakdown.skills).toBe(20);
+    expect(result.breakdown.experience).toBe(0);
+    expect(result.breakdown.title).toBe(0);
+    expect(result.score).toBe(12);
+  });
+
+  it('matches Go and Express in technical contexts while ignoring lowercase English verbs', () => {
+    const backendResume = {
+      title: 'Backend Systems Resume',
+      summary: 'Backend engineer building APIs.',
+      content: {
+        basics: { name: 'Alex', label: 'Backend Engineer' },
+        sections: [
+          {
+            id: 'tech-skills',
+            type: 'TechnicalSkillItem',
+            title: 'Technical Skills',
+            content: [{ id: 'ts-1', name: 'Backend', technologies: ['Go', 'Express', 'PostgreSQL'] }],
+          },
+          {
+            id: 'work',
+            type: 'WorkItem',
+            title: 'Experience',
+            content: [{ id: 'w-1', name: 'CloudCo', position: 'Backend Engineer', description: 'Built services in Go and Node.js/Express.' }],
+          },
+        ],
+      },
+    };
+
+    const techJd =
+      'Seeking a Backend Engineer experienced in Go, Node.js, Express, and Docker to build microservices in Go.';
+    const matchedResult = analyzeJobMatch(backendResume, techJd, 'Backend Engineer');
+
+    expect(matchedResult.matchedKeywords.map((k) => k.keyword)).toEqual(
+      expect.arrayContaining(['Go', 'Express', 'Node.js'])
+    );
+    expect(matchedResult.missingKeywords.map((k) => k.keyword)).toEqual(['Docker', 'Microservices']);
+
+    // Lowercase prose verbs on resume must not satisfy technical Go/Express requirements
+    const proseResume = {
+      title: 'Coordinator Resume',
+      summary: 'We go above and beyond and express ideas clearly.',
+      content: {
+        basics: { name: 'Sam', label: 'Operations Coordinator' },
+        sections: [
+          {
+            id: 'work',
+            type: 'WorkItem',
+            title: 'Experience',
+            content: [{ id: 'w-1', name: 'Org', position: 'Coordinator', description: 'Helped teams go faster and express feedback.' }],
+          },
+        ],
+      },
+    };
+    const unmatchedResult = analyzeJobMatch(proseResume, techJd, 'Backend Engineer');
+    expect(unmatchedResult.matchedKeywords).toEqual([]);
+    expect(unmatchedResult.missingKeywords.map((k) => k.keyword)).toEqual(
+      expect.arrayContaining(['Go', 'Express'])
+    );
+  });
+
+  it('matches experience and title keywords on whole-word boundaries rather than substrings', () => {
+    const substringResume = {
+      title: 'Smart Startup Resume',
+      summary: 'Rapidly started workshops.',
+      content: {
+        basics: { name: 'Pat', label: 'DevOps Specialist' },
+        sections: [
+          {
+            id: 'work',
+            type: 'WorkItem',
+            title: 'Experience',
+            content: [
+              {
+                id: 'w-1',
+                name: 'Startup',
+                position: 'DevOps Specialist',
+                description: 'Rapidly started smart capital research.',
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    // "art" appears in "smart"/"started", "arch" in "research", "ops" in "DevOps" — none are whole words
+    const result = analyzeJobMatch(
+      substringResume,
+      'Looking for fine art curation and art restoration with React.',
+      'Ops Arch'
+    );
+    expect(result.breakdown.experience).toBe(0);
+    expect(result.breakdown.title).toBe(0);
+  });
 });
 
 describe('POST /api/resumes/:resumeId/job-match', () => {
