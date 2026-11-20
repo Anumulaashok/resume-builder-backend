@@ -134,11 +134,42 @@ export const generateResumeFromPrompt = async (
       return next(new AppError('Resume not found', 404));
     }
 
-    const aiResponse = await aiService.analyzeResumePrompt(prompt);
+    const aiResponse = await aiService.analyzeResumePrompt(prompt, resume);
+
+    if (!resume.history) {
+      resume.history = [];
+    }
+    resume.history.push({
+      title: resume.title,
+      ...(resume.summary !== undefined ? { summary: resume.summary } : {}),
+      content: cloneSnapshotValue(resume.content),
+      themeConfig: cloneSnapshotValue(resume.themeConfig),
+      updatedAt: new Date()
+    });
+    if (resume.history.length > MAX_HISTORY_SNAPSHOTS) {
+      resume.history.splice(0, resume.history.length - MAX_HISTORY_SNAPSHOTS);
+    }
 
     resume.summary = aiResponse.summary;
     if (aiResponse.title) resume.title = aiResponse.title;
-    if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
+    if (aiResponse.content) {
+      const nextContent = aiResponse.content as IResume['content'];
+      if (
+        nextContent.basics &&
+        nextContent.basics.summary === undefined &&
+        aiResponse.summary !== undefined
+      ) {
+        nextContent.basics.summary = aiResponse.summary;
+      }
+      resume.content = nextContent;
+    }
+    if (Array.isArray(aiResponse.source_fact_ids)) {
+      resume.source_fact_ids = aiResponse.source_fact_ids;
+    }
+    if (typeof (resume as any).markModified === 'function') {
+      resume.markModified('content');
+      resume.markModified('history');
+    }
     const updatedResume = await resume.save();
 
     res.json({
@@ -148,7 +179,10 @@ export const generateResumeFromPrompt = async (
 
   } catch (error: any) {
     console.error('Generate resume from prompt error:', error.message);
-    if (error.message.includes('AI Service')) {
+    if (error instanceof AppError) {
+      return next(error);
+    }
+    if (error?.message?.includes('AI Service')) {
       return next(new AppError(`AI Service Error: ${error.message}`, 502));
     }
     next(error);
@@ -281,11 +315,33 @@ export const undoResume = async (
 
     // Pop the last history state
     const lastState = resume.history.pop();
-    
-    // Restore the content and themeConfig
-    resume.content = lastState!.content;
-    if (lastState && 'themeConfig' in lastState) {
-      resume.themeConfig = lastState.themeConfig;
+    const snapshot =
+      lastState && typeof (lastState as any).toObject === 'function'
+        ? (lastState as any).toObject()
+        : lastState;
+
+    // Restore title, summary, content, and themeConfig
+    if (snapshot) {
+      resume.content = snapshot.content;
+      if ('themeConfig' in snapshot) {
+        resume.themeConfig = snapshot.themeConfig;
+      }
+      if (typeof snapshot.title === 'string' && snapshot.title.trim()) {
+        resume.title = snapshot.title;
+      }
+      if (snapshot.summary !== undefined) {
+        resume.summary = snapshot.summary;
+      } else if (snapshot.content?.basics?.summary !== undefined) {
+        resume.summary = snapshot.content.basics.summary;
+      } else if (resume.summary !== undefined) {
+        resume.summary = undefined;
+      }
+    }
+
+    if (typeof (resume as any).markModified === 'function') {
+      resume.markModified('content');
+      resume.markModified('themeConfig');
+      resume.markModified('history');
     }
 
     const updatedResume = await resume.save();
@@ -299,12 +355,29 @@ export const undoResume = async (
   }
 };
 
+const stripSourceFactIds = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripSourceFactIds(entry)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      if (key === 'source_fact_ids') continue;
+      cleaned[key] = stripSourceFactIds(val);
+    }
+    return cleaned as T;
+  }
+  return value;
+};
+
 const formatPublicResumePayload = (resume: IResume | Record<string, any>) => {
   const resumeObj =
     typeof (resume as IResume).toObject === 'function'
       ? (resume as IResume).toObject()
       : JSON.parse(JSON.stringify(resume));
-  const rawContent = resumeObj.content || { basics: {}, sections: [], sectionOrder: [] };
+  const rawContent = stripSourceFactIds(
+    resumeObj.content || { basics: {}, sections: [], sectionOrder: [] }
+  );
   const sanitizedContent = {
     ...rawContent,
     basics: {
@@ -955,6 +1028,56 @@ export const restoreResumeHistory = async (
       success: true,
       data: updatedResume,
       previousSnapshotIndex
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Coach or rewrite an individual resume bullet / summary with fact provenance
+// @route   POST /api/resumes/:resumeId/bullets/coach
+// @route   POST /api/resumes/bullets/coach
+// @access  Private (Needs Auth Middleware)
+export const coachResumeBullet = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    if (!req.user?._id) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    const { text, action, sectionType, fieldKey, itemContext, userMetric, resumeContext } =
+      req.body || {};
+
+    let resumeSource: aiService.ResumeFactSourceInput | null = null;
+    if (req.params.resumeId) {
+      const resume = await Resume.findOne({
+        _id: req.params.resumeId,
+        userId: req.user._id
+      });
+      if (!resume) {
+        throw new AppError('Resume not found', 404);
+      }
+      resumeSource = typeof resume.toObject === 'function' ? resume.toObject() : resume;
+    } else if (resumeContext && typeof resumeContext === 'object') {
+      resumeSource = resumeContext;
+    }
+
+    const result = await aiService.coachBullet({
+      text,
+      action,
+      sectionType,
+      fieldKey,
+      itemContext,
+      userMetric,
+      resume: resumeSource
+    });
+
+    res.json({
+      success: true,
+      data: result
     });
   } catch (error) {
     next(error);

@@ -6,7 +6,8 @@ import {
   sharingSlugValidation,
   sharingSlugQueryValidation,
   resumeIdParamValidation,
-  historyIndexValidation
+  historyIndexValidation,
+  bulletCoachValidation
 } from '../middleware/validate';
 import { publicShareLimiter } from '../middleware/rateLimiter';
 import {
@@ -20,6 +21,7 @@ import {
   getResumeHistorySnapshot,
   restoreResumeHistory,
   generateResumeFromPrompt,
+  coachResumeBullet,
   analyzeResumeJobMatch,
   getPublicResumeByToken,
   getShareSettings,
@@ -49,6 +51,18 @@ router.use(protect);
 router.route('/')
   .get(getResumes)
   .post(validate(resumeValidation), asyncHandler(createResume));
+
+router.post(
+  '/bullets/coach',
+  validate(bulletCoachValidation),
+  asyncHandler(coachResumeBullet)
+);
+
+router.post(
+  '/:resumeId/bullets/coach',
+  validate(bulletCoachValidation),
+  asyncHandler(coachResumeBullet)
+);
 
 // Share settings, custom slug & view stats management for resume owner
 router.route('/:resumeId/share')
