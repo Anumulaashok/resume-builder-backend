@@ -6,17 +6,55 @@ import logger from '../utils/logger';
 const LocationSchema = z.object({
   address: z.string().optional(),
   city: z.string().optional(),
+  region: z.string().optional(),
   countryCode: z.string().optional(),
   postalCode: z.string().optional()
 }).optional();
+
+const ProfileSchema = z.object({
+  network: z.string().optional(),
+  username: z.string().optional(),
+  url: z.string().optional()
+});
 
 const BasicsSchema = z.object({
   name: z.string(),
   label: z.string().optional(),
   email: z.string(),
   phone: z.string().optional(),
-  location: LocationSchema
+  url: z.string().optional(),
+  website: z.string().optional(),
+  portfolioUrl: z.string().optional(),
+  linkedin: z.string().optional(),
+  github: z.string().optional(),
+  summary: z.string().optional(),
+  location: LocationSchema,
+  profiles: z.array(ProfileSchema).optional()
 });
+
+const isSafeAiLink = (raw?: string): boolean => {
+  if (!raw) return false;
+  const cleaned = raw.replace(/[\u0000-\u001F\u007F]+/g, '').trim();
+  if (!cleaned) return false;
+  if (/^(javascript|data|vbscript|file):/i.test(cleaned)) return false;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(cleaned) && !/^https?:\/\//i.test(cleaned)) {
+    return false;
+  }
+  return true;
+};
+
+const sanitizeAiBasicsLinks = (basics: z.infer<typeof BasicsSchema>) => {
+  const next = { ...basics };
+  (['url', 'website', 'portfolioUrl', 'linkedin', 'github'] as const).forEach((key) => {
+    if (next[key] !== undefined && !isSafeAiLink(next[key])) {
+      delete next[key];
+    }
+  });
+  if (Array.isArray(next.profiles)) {
+    next.profiles = next.profiles.filter((p) => !p?.url || isSafeAiLink(p.url));
+  }
+  return next;
+};
 
 const SectionSchema = z.object({
   id: z.string(),
@@ -58,17 +96,39 @@ export const analyzeResumePrompt = async (prompt: string): Promise<AIResumeResul
     messages: [
       {
         role: 'system',
-        content: `You are an expert resume builder. Extract the user's prompt into a structured JSON resume. The JSON must exactly match this schema:
+        content: `You are an expert resume builder. Extract the user's prompt into a structured JSON resume. The JSON must match this schema:
 {
   "title": "String",
-  "summary": "String",
+  "summary": "String (optional)",
   "content": {
-    "basics": { "name": "String", "email": "String", "phone": "String (optional)", "label": "String (optional)" },
+    "basics": {
+      "name": "String",
+      "email": "String",
+      "phone": "String (optional)",
+      "label": "String (optional)",
+      "summary": "String (optional)",
+      "url": "String (optional)",
+      "linkedin": "String (optional)",
+      "github": "String (optional)",
+      "location": {
+        "address": "String (optional)",
+        "city": "String (optional)",
+        "region": "String (optional)",
+        "countryCode": "String (optional)",
+        "postalCode": "String (optional)"
+      },
+      "profiles": [
+        { "network": "String (optional)", "username": "String (optional)", "url": "String (optional)" }
+      ]
+    },
     "sections": [ { "id": "String", "type": "String", "title": "String", "content": [ ] } ],
     "sectionOrder": [ "String" ]
   }
 }
-Return ONLY valid JSON. No markdown, no explanations.`
+CRITICAL RULES:
+1. Only include location fields (address, city, region, countryCode, postalCode) and profile/website links (linkedin, github, url, profiles) when they are explicitly present in the user's input.
+2. Never invent, guess, or fabricate URLs, usernames, contact details, or locations that were not provided by the user.
+3. Return ONLY valid JSON. No markdown, no explanations.`
       },
       {
         role: 'user',
@@ -132,7 +192,15 @@ Return ONLY valid JSON. No markdown, no explanations.`
         throw new Error('AI generated malformed structure that failed validation.');
       }
 
-      return { ...result.data, summary: result.data.summary ?? '' };
+      const sanitizedData: GeneratedResume = {
+        ...result.data,
+        content: {
+          ...result.data.content,
+          basics: sanitizeAiBasicsLinks(result.data.content.basics)
+        }
+      };
+
+      return { ...sanitizedData, summary: sanitizedData.summary ?? sanitizedData.content.basics.summary ?? '' };
     } catch (error: any) {
       attempt++;
       logger.warn(`AI generation attempt ${attempt} failed: ${error.message}`);

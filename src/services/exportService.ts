@@ -846,6 +846,7 @@ export function prepareExportableResume(rawResume: Record<string, any>): Prepare
     privacy.hideAddress ? '' : sanitizeText(rawLoc.address, 120),
     sanitizeText(rawLoc.city, 80),
     sanitizeText(rawLoc.region, 80),
+    privacy.hideAddress ? '' : sanitizeText(rawLoc.postalCode, 30),
     sanitizeText(rawLoc.countryCode, 40),
   ]
     .filter(Boolean)

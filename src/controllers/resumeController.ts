@@ -24,11 +24,64 @@ import {
 const EDITABLE_RESUME_FIELDS = ['title', 'summary', 'templateId', 'themeConfig', 'content'] as const;
 
 // Restrict client input to editable fields so ownership, sharing and history can't be overwritten.
-const pickEditableFields = (body: Record<string, unknown> = {}) =>
-  EDITABLE_RESUME_FIELDS.reduce<Record<string, unknown>>((acc, key) => {
+const pickEditableFields = (body: Record<string, unknown> = {}) => {
+  const picked = EDITABLE_RESUME_FIELDS.reduce<Record<string, unknown>>((acc, key) => {
     if (body[key] !== undefined) acc[key] = body[key];
     return acc;
   }, {});
+  const basicsSummary = (body.content as Record<string, any> | undefined)?.basics?.summary;
+  if (picked.summary === undefined && typeof basicsSummary === 'string') {
+    picked.summary = basicsSummary;
+  }
+  return picked;
+};
+
+const toComparableResumeValue = (val: unknown, parentKey?: string): unknown => {
+  if (val === undefined || val === null || val === '') {
+    return undefined;
+  }
+  const unwrapped =
+    typeof (val as { toObject?: (opts?: object) => unknown })?.toObject === 'function'
+      ? (val as { toObject: (opts?: object) => unknown }).toObject({ depopulate: true })
+      : val;
+  if (unwrapped instanceof Date) {
+    return unwrapped.toISOString();
+  }
+  if (Array.isArray(unwrapped)) {
+    const mapped = unwrapped
+      .map((item) => toComparableResumeValue(item, parentKey))
+      .filter((item) => item !== undefined);
+    if (parentKey === 'profiles' && mapped.length === 0) {
+      return undefined;
+    }
+    return mapped;
+  }
+  if (typeof unwrapped === 'object' && unwrapped !== null) {
+    const sortedKeys = Object.keys(unwrapped as Record<string, unknown>).sort();
+    const result: Record<string, unknown> = {};
+    for (const key of sortedKeys) {
+      if (key === '_id' && parentKey !== undefined) {
+        continue;
+      }
+      const normalizedChild = toComparableResumeValue(
+        (unwrapped as Record<string, unknown>)[key],
+        key
+      );
+      if (normalizedChild !== undefined) {
+        result[key] = normalizedChild;
+      }
+    }
+    if ((parentKey === 'location' || parentKey === 'profiles') && Object.keys(result).length === 0) {
+      return undefined;
+    }
+    return result;
+  }
+  return unwrapped;
+};
+
+const areResumePayloadsEquivalent = (prev: unknown, next: unknown): boolean =>
+  JSON.stringify(toComparableResumeValue(prev, 'root')) ===
+  JSON.stringify(toComparableResumeValue(next, 'root'));
 
 // @desc    Create a new resume
 // @route   POST /api/resumes
@@ -138,7 +191,12 @@ export const generateResumeFromPrompt = async (
 
     resume.summary = aiResponse.summary;
     if (aiResponse.title) resume.title = aiResponse.title;
-    if (aiResponse.content) resume.content = aiResponse.content as IResume['content'];
+    if (aiResponse.content) {
+      if (aiResponse.summary && aiResponse.content.basics && !aiResponse.content.basics.summary) {
+        aiResponse.content.basics.summary = aiResponse.summary;
+      }
+      resume.content = aiResponse.content as IResume['content'];
+    }
     const updatedResume = await resume.save();
 
     res.json({
@@ -170,18 +228,23 @@ export const updateResume = async (
     }
 
     // Save current content and themeConfig to history only when previous snapshot is >10 min old or content changed substantially
+    const prevEffectiveSummary =
+      existingResume.summary ?? existingResume.content?.basics?.summary ?? '';
+    const hasIncomingSummary =
+      req.body.summary !== undefined || req.body.content?.basics?.summary !== undefined;
+    const nextEffectiveSummary =
+      req.body.summary ?? req.body.content?.basics?.summary ?? '';
     const summaryChanged = Boolean(
-      req.body.summary !== undefined &&
-      (existingResume.summary ?? '') !== (req.body.summary ?? '')
+      hasIncomingSummary && prevEffectiveSummary !== nextEffectiveSummary
     );
     const contentChanged = Boolean(
-      (req.body.content &&
-        JSON.stringify(existingResume.content) !== JSON.stringify(req.body.content)) ||
+      (req.body.content !== undefined &&
+        !areResumePayloadsEquivalent(existingResume.content, req.body.content)) ||
       summaryChanged
     );
     const themeChanged = Boolean(
       req.body.themeConfig !== undefined &&
-      JSON.stringify(existingResume.themeConfig) !== JSON.stringify(req.body.themeConfig)
+      !areResumePayloadsEquivalent(existingResume.themeConfig, req.body.themeConfig)
     );
 
     const now = new Date();
@@ -308,7 +371,10 @@ const formatPublicResumePayload = (resume: IResume | Record<string, any>) => {
   const sanitizedContent = {
     ...rawContent,
     basics: {
-      ...(rawContent.basics || {})
+      ...(rawContent.basics || {}),
+      ...(rawContent.basics?.location && typeof rawContent.basics.location === 'object'
+        ? { location: { ...rawContent.basics.location } }
+        : {})
     }
   };
 
@@ -327,6 +393,7 @@ const formatPublicResumePayload = (resume: IResume | Record<string, any>) => {
   if (privacy.hideAddress) {
     if (sanitizedContent.basics.location) {
       delete sanitizedContent.basics.location.address;
+      delete sanitizedContent.basics.location.postalCode;
     }
   }
 
