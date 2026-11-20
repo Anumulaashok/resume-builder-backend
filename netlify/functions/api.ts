@@ -8,6 +8,11 @@ let isDbConnected = false;
 
 // Configure serverless-http with URL rewrite handling for Netlify redirects
 const serverlessHandler = serverless(app, {
+  binary: [
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/octet-stream',
+  ],
   request: (req: any, event: any) => {
     req.ip = (event.headers && (event.headers['client-ip'] || event.headers['x-forwarded-for'])) || '127.0.0.1';
     let p = event.path || '';

@@ -1,4 +1,15 @@
 import net from 'net';
+import { renderResumeDocxDocument } from './docxRenderer';
+import { renderResumePdfDocument } from './pdfRenderer';
+
+export {
+  resolveExportTheme,
+  TEMPLATE_EXPORT_DEFINITIONS,
+  TemplateLayout,
+  ResolvedExportTheme,
+} from './pdfTemplateConfig';
+
+export type ExportFormat = 'txt' | 'pdf' | 'docx';
 
 const MAX_FIELD_LENGTH = 8000;
 const MAX_SECTIONS = 60;
@@ -438,8 +449,10 @@ export function sanitizePhone(rawPhone: unknown): string {
 
 export function buildSafeExportFilename(
   resume: { title?: unknown; content?: { basics?: { name?: unknown } } },
-  ext: 'txt' = 'txt'
+  ext: ExportFormat = 'txt'
 ): string {
+  const safeExt: ExportFormat =
+    ext === 'pdf' || ext === 'docx' || ext === 'txt' ? ext : 'txt';
   const rawBase =
     sanitizeText(resume?.title, 120) ||
     sanitizeText(resume?.content?.basics?.name, 120) ||
@@ -451,7 +464,7 @@ export function buildSafeExportFilename(
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
 
-  return `${slug || 'resume'}.${ext}`;
+  return `${slug || 'resume'}.${safeExt}`;
 }
 
 /**
@@ -1199,3 +1212,25 @@ export function renderResumePlainText(rawResume: Record<string, any>): string {
 
   return `${blocks.join('\n\n')}\n`;
 }
+
+/**
+ * Generates an editable, single-column ATS-friendly OpenXML (.docx) document
+ * with native Word heading styles, bullet lists, and verified external hyperlinks.
+ */
+export async function renderResumeDocx(
+  rawResume: Record<string, any>
+): Promise<Buffer> {
+  return renderResumeDocxDocument(rawResume);
+}
+
+/**
+ * Generates a pure-JavaScript multi-page vector PDF using `pdf-lib` and `@pdf-lib/fontkit`
+ * that embeds Unicode fonts, maps all 17 template layout families & theme tokens,
+ * preserves logical reading order, and attaches verified external hyperlinks.
+ */
+export async function renderResumePdf(
+  rawResume: Record<string, any>
+): Promise<Buffer> {
+  return renderResumePdfDocument(rawResume);
+}
+

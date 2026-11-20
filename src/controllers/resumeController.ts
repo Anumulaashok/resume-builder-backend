@@ -17,7 +17,10 @@ import {
   shouldCreateSnapshot
 } from '../utils/resumeHistory';
 import {
+  ExportFormat,
   buildSafeExportFilename,
+  renderResumeDocx,
+  renderResumePdf,
   renderResumePlainText
 } from '../services/exportService';
 
@@ -755,6 +758,141 @@ export const analyzeResumeJobMatch = async (
   }
 };
 
+const PDF_MIME_TYPE = 'application/pdf';
+const DOCX_MIME_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const TXT_MIME_TYPE = 'text/plain; charset=utf-8';
+
+const sendExportBufferResponse = (
+  res: Response,
+  buffer: Buffer,
+  contentType: string,
+  filename: string
+) => {
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.setHeader('Content-Length', String(buffer.length));
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.status(200).send(buffer);
+};
+
+const renderAndSendResumeExport = async (
+  res: Response,
+  resumeDoc: any,
+  format: ExportFormat
+) => {
+  const resumeData = resumeDoc.toObject ? resumeDoc.toObject() : resumeDoc;
+  const filename = buildSafeExportFilename(resumeData, format);
+
+  if (format === 'pdf') {
+    const pdfBuffer = await renderResumePdf(resumeData);
+    sendExportBufferResponse(res, pdfBuffer, PDF_MIME_TYPE, filename);
+    return;
+  }
+
+  if (format === 'docx') {
+    const docxBuffer = await renderResumeDocx(resumeData);
+    sendExportBufferResponse(res, docxBuffer, DOCX_MIME_TYPE, filename);
+    return;
+  }
+
+  const plainText = renderResumePlainText(resumeData);
+  const txtBuffer = Buffer.from(plainText, 'utf-8');
+  sendExportBufferResponse(res, txtBuffer, TXT_MIME_TYPE, filename);
+};
+
+const findOwnerResumeOrThrow = async (req: AuthenticatedRequest) => {
+  if (!req.user?._id) {
+    throw new AppError('User not authenticated', 401);
+  }
+
+  const resume = await Resume.findOne({
+    _id: req.params.resumeId,
+    userId: req.user._id
+  });
+
+  if (!resume) {
+    throw new AppError('Resume not found', 404);
+  }
+
+  return resume;
+};
+
+const findPublicResumeByTokenOrThrow = async (req: Request) => {
+  const { shareToken } = req.params;
+  if (!shareToken) {
+    throw new AppError('Share token is required', 400);
+  }
+
+  const resume = await Resume.findOne({
+    'sharing.shareToken': shareToken,
+    'sharing.isPublic': true
+  });
+
+  if (!resume) {
+    throw new AppError('Resume not found or share link is inactive or revoked', 404);
+  }
+
+  return resume;
+};
+
+const findPublicResumeBySlugOrThrow = async (req: Request) => {
+  const rawSlug = req.params.slug;
+  if (!rawSlug || typeof rawSlug !== 'string') {
+    throw new AppError('Slug is required', 400);
+  }
+
+  const normalizedSlug = rawSlug.trim().toLowerCase();
+  const check = validateCustomSlug(normalizedSlug);
+  if (!check.valid) {
+    throw new AppError('Resume not found or share link is inactive or revoked', 404);
+  }
+
+  const resume = await Resume.findOne({
+    'sharing.slug': normalizedSlug,
+    'sharing.isPublic': true
+  });
+
+  if (!resume) {
+    throw new AppError('Resume not found or share link is inactive or revoked', 404);
+  }
+
+  return resume;
+};
+
+// @desc    Export a resume as a vector PDF file
+// @route   GET /api/resumes/:resumeId/export.pdf
+// @access  Private (Needs Auth Middleware)
+export const exportResumePdf = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findOwnerResumeOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'pdf');
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export a resume as an editable single-column OpenXML (.docx) file
+// @route   GET /api/resumes/:resumeId/export.docx
+// @access  Private (Needs Auth Middleware)
+export const exportResumeDocx = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findOwnerResumeOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'docx');
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Export a resume as an ATS-safe UTF-8 plain text file
 // @route   GET /api/resumes/:resumeId/export.txt
 // @access  Private (Needs Auth Middleware)
@@ -764,30 +902,92 @@ export const exportResumeTxt = async (
   next: NextFunction
 ) => {
   try {
-    if (!req.user?._id) {
-      throw new AppError('User not authenticated', 401);
-    }
+    const resume = await findOwnerResumeOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'txt');
+  } catch (error) {
+    next(error);
+  }
+};
 
-    const resume = await Resume.findOne({
-      _id: req.params.resumeId,
-      userId: req.user._id
-    });
+// @desc    Export a publicly shared resume by share token (.pdf, .docx, .txt)
+// @route   GET /api/resumes/share/:shareToken/export.{pdf|docx|txt}
+// @access  Public (Unauthenticated, Rate-Limited)
+export const exportSharedResumeByTokenPdf = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findPublicResumeByTokenOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'pdf');
+  } catch (error) {
+    next(error);
+  }
+};
 
-    if (!resume) {
-      throw new AppError('Resume not found', 404);
-    }
+export const exportSharedResumeByTokenDocx = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findPublicResumeByTokenOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'docx');
+  } catch (error) {
+    next(error);
+  }
+};
 
-    const resumeData = resume.toObject ? resume.toObject() : resume;
-    const plainText = renderResumePlainText(resumeData);
-    const txtBuffer = Buffer.from(plainText, 'utf-8');
-    const filename = buildSafeExportFilename(resumeData);
+export const exportSharedResumeByTokenTxt = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findPublicResumeByTokenOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'txt');
+  } catch (error) {
+    next(error);
+  }
+};
 
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', String(txtBuffer.length));
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.status(200).send(txtBuffer);
+// @desc    Export a publicly shared resume by custom slug (.pdf, .docx, .txt)
+// @route   GET /api/public/r/:slug/export.{pdf|docx|txt}
+// @access  Public (Unauthenticated, Rate-Limited)
+export const exportSharedResumeBySlugPdf = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findPublicResumeBySlugOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'pdf');
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const exportSharedResumeBySlugDocx = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findPublicResumeBySlugOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'docx');
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const exportSharedResumeBySlugTxt = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const resume = await findPublicResumeBySlugOrThrow(req);
+    await renderAndSendResumeExport(res, resume, 'txt');
   } catch (error) {
     next(error);
   }

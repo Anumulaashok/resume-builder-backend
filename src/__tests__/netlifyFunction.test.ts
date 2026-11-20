@@ -1,5 +1,6 @@
 import { handler } from '../../netlify/functions/api';
 import { Portfolio } from '../models/Portfolio';
+import { Resume } from '../models/Resume';
 
 jest.mock('../config/db.config', () => ({
   connectDB: jest.fn().mockResolvedValue(undefined)
@@ -72,5 +73,55 @@ describe('Netlify Functions Serverless Handler', () => {
     const body = JSON.parse(result.body);
     expect(body.success).toBe(true);
     expect(body.data.slug).toBe('jane-portfolio');
+  });
+
+  it('should return uncorrupted base64-encoded binary buffers for PDF and DOCX exports', async () => {
+    const mockResume = {
+      _id: '507f1f77bcf86cd799439044',
+      title: 'Netlify Binary Export Resume',
+      templateId: 'modern',
+      sharing: {
+        isPublic: true,
+        shareToken: 'netlify-share-token-1',
+        privacy: { hideEmail: false, hidePhone: false, hideAddress: false }
+      },
+      content: {
+        basics: {
+          name: 'Maya Lin',
+          label: 'Staff Engineer',
+          email: 'maya@example.com'
+        },
+        sections: [],
+        sectionOrder: []
+      }
+    };
+
+    jest.spyOn(Resume, 'findOne').mockResolvedValue(mockResume as any);
+
+    const pdfResult: any = await handler(
+      {
+        httpMethod: 'GET',
+        path: '/.netlify/functions/api/resumes/share/netlify-share-token-1/export.pdf',
+        headers: {}
+      },
+      {}
+    );
+    expect(pdfResult.statusCode).toBe(200);
+    expect(pdfResult.isBase64Encoded).toBe(true);
+    const pdfBytes = Buffer.from(pdfResult.body, 'base64');
+    expect(pdfBytes.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    const docxResult: any = await handler(
+      {
+        httpMethod: 'GET',
+        path: '/.netlify/functions/api/resumes/share/netlify-share-token-1/export.docx',
+        headers: {}
+      },
+      {}
+    );
+    expect(docxResult.statusCode).toBe(200);
+    expect(docxResult.isBase64Encoded).toBe(true);
+    const docxBytes = Buffer.from(docxResult.body, 'base64');
+    expect(docxBytes.subarray(0, 2).toString('latin1')).toBe('PK');
   });
 });

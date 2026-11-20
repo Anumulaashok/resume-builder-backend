@@ -27,21 +27,40 @@ import {
   checkSharingSlugAvailability,
   updateSharingSlug,
   getSharingStats,
-  exportResumeTxt
+  exportResumeTxt,
+  exportResumePdf,
+  exportResumeDocx,
+  exportSharedResumeByTokenPdf,
+  exportSharedResumeByTokenDocx,
+  exportSharedResumeByTokenTxt
 } from '../controllers/resumeController';
 import { asyncHandler } from '../utils/asyncHandler';
 
 const router = express.Router();
 
-// Public share route - Unauthenticated, strictly GET only, rate limited
+const disallowNonGetOnPublicShare = (req: express.Request, res: express.Response) => {
+  res.status(405).json({
+    success: false,
+    message: `Method ${req.method} not allowed on public share endpoint`
+  });
+};
+
+// Public share routes - Unauthenticated, strictly GET only, rate limited
+router.route('/share/:shareToken/export.pdf')
+  .get(publicShareLimiter, asyncHandler(exportSharedResumeByTokenPdf))
+  .all(disallowNonGetOnPublicShare);
+
+router.route('/share/:shareToken/export.docx')
+  .get(publicShareLimiter, asyncHandler(exportSharedResumeByTokenDocx))
+  .all(disallowNonGetOnPublicShare);
+
+router.route('/share/:shareToken/export.txt')
+  .get(publicShareLimiter, asyncHandler(exportSharedResumeByTokenTxt))
+  .all(disallowNonGetOnPublicShare);
+
 router.route('/share/:shareToken')
   .get(publicShareLimiter, asyncHandler(getPublicResumeByToken))
-  .all((req, res) => {
-    res.status(405).json({
-      success: false,
-      message: `Method ${req.method} not allowed on public share endpoint`
-    });
-  });
+  .all(disallowNonGetOnPublicShare);
 
 // Protect all following resume routes
 router.use(protect);
@@ -73,7 +92,9 @@ router.patch(
   asyncHandler(updateSharingSlug)
 );
 
-// Authenticated ATS plain-text resume export endpoint
+// Authenticated resume export endpoints (.pdf, .docx, .txt)
+router.get('/:resumeId/export.pdf', asyncHandler(exportResumePdf));
+router.get('/:resumeId/export.docx', asyncHandler(exportResumeDocx));
 router.get('/:resumeId/export.txt', asyncHandler(exportResumeTxt));
 
 router.route('/:resumeId')
