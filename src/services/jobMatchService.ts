@@ -19,14 +19,53 @@ export interface JobMatchResult {
   totals: { matched: number; required: number };
 }
 
+interface ResumeSectionLike {
+  id?: string;
+  type?: string;
+  title?: string;
+  enabled?: boolean;
+  content?: unknown[] | string;
+}
+
 interface ResumeLike {
   title?: string;
   summary?: string;
   content?: {
-    basics?: { label?: string; summary?: string; [key: string]: unknown };
-    sections?: Array<{ id?: string; type?: string; title?: string; content?: unknown[] }>;
+    basics?: { label?: string; summary?: string; enabled?: boolean; [key: string]: unknown };
+    sections?: ResumeSectionLike[];
+    sectionOrder?: string[];
   };
 }
+
+const WORK_SECTION_TOKENS = new Set([
+  'workitem',
+  'work',
+  'experience',
+  'workexperience',
+  'work_experience',
+  'professional_experience',
+  'employment',
+]);
+
+const PROJECT_SECTION_TOKENS = new Set([
+  'projectitem',
+  'project',
+  'projects',
+]);
+
+const SKILL_SECTION_TOKENS = new Set([
+  'skillitem',
+  'technicalskillitem',
+  'softskillitem',
+  'skill',
+  'skills',
+  'technicalskills',
+  'technical_skills',
+  'softskills',
+  'soft_skills',
+]);
+
+const IGNORED_OBJECT_KEYS = new Set(['id', '_id', 'enabled', 'isCustom']);
 
 // Canonical skill -> aliases (all lowercase); aliases are matched as whole words/phrases.
 const SKILL_DICTIONARY: Record<string, string[]> = {
@@ -132,10 +171,209 @@ const aliasPattern = (alias: string) => new RegExp(`(^|[^a-z0-9+#.])${escapeRegE
 const countAlias = (text: string, aliases: string[]) =>
   aliases.reduce((sum, alias) => sum + (text.match(aliasPattern(alias))?.length ?? 0), 0);
 
-const collectStrings = (value: unknown, out: string[]): void => {
-  if (typeof value === 'string') out.push(value);
-  else if (Array.isArray(value)) value.forEach((item) => collectStrings(item, out));
-  else if (value && typeof value === 'object') Object.values(value).forEach((item) => collectStrings(item, out));
+const hasWholeWord = (normalizedText: string, word: string): boolean =>
+  Boolean(word) && aliasPattern(word).test(normalizedText);
+
+const countContextualGo = (rawText: string): number => {
+  let count = 0;
+  const pattern = /(^|[^A-Za-z0-9+#.-])(Go|go)(?=$|[^A-Za-z0-9+#-])/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(rawText)) !== null) {
+    const token = match[2];
+    const tokenStart = match.index + match[1].length;
+    const before = rawText.slice(0, tokenStart);
+    const after = rawText.slice(tokenStart + token.length);
+
+    if (token === 'Go') {
+      if (
+        /^\s+(?:to|the|beyond|above|ahead|live|extra|further|back|out|over|into|through|around|away|wrong|smoothly|forward|hand|mile)\b/i.test(
+          after
+        )
+      ) {
+        continue;
+      }
+      const atSentenceStart = /^\s*$/.test(before) || /(?:[.!?]\s+|\n\s*)$/.test(before);
+      if (atSentenceStart) {
+        if (
+          after.trim() === '' ||
+          /^(?:\s*(?:,|\/|;|:|\)|\]|\(|\+|\d+(?:\.\d+)?)|\s+(?:and|or|developer|developers|engineer|engineers|engineering|programming|language|microservices|microservice|services|service|backend|backends|api|apis|sdk|runtime|goroutines|concurrency|experience|skills?|stack|cli|modules?|packages?)\b)/i.test(
+            after
+          )
+        ) {
+          count += 1;
+        }
+      } else {
+        count += 1;
+      }
+    } else if (
+      /^\s+\d+\.\d+\b/.test(after) ||
+      /(?:python|rust|java|c\+\+|c#|typescript|javascript|node(?:\.js)?|kotlin|ruby|scala|docker|kubernetes|k8s|grpc|postgres(?:ql)?)\s*(?:\/|,\s*(?:and\s+|or\s+)?)\s*$/i.test(
+        before
+      ) ||
+      /^\s*(?:\/|,\s*(?:and\s+|or\s+)?)\s*(?:python|rust|java|c\+\+|c#|typescript|javascript|node(?:\.js)?|kotlin|ruby|scala|docker|kubernetes|k8s|grpc|postgres(?:ql)?)\b/i.test(
+        after
+      ) ||
+      /\b(?:written|programmed|coded|implemented|built\s+(?:microservices|services|apis|backends?))\s+in\s+$/i.test(
+        before
+      )
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
+const countContextualExpress = (rawText: string): number => {
+  let count = 0;
+  const pattern = /(^|[^A-Za-z0-9+#.-])(Express|express)(?=$|[^A-Za-z0-9+#-])/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(rawText)) !== null) {
+    const token = match[2];
+    const tokenStart = match.index + match[1].length;
+    const before = rawText.slice(0, tokenStart);
+    const after = rawText.slice(tokenStart + token.length);
+
+    // Avoid double-counting express.js / expressjs which are matched via SKILL_DICTIONARY.Express
+    if (/^\.?js\b/i.test(after)) {
+      continue;
+    }
+
+    if (token === 'Express') {
+      if (/\b(?:American|Federal|Panda|Polar|Orient|Pony)\s+$/i.test(before)) {
+        continue;
+      }
+      if (
+        /^\s+(?:gratitude|interest|concern|concerns|yourself|yourselves|themselves|ourselves|your|our|their|my|his|her|opinions?|views?|appreciation|sympathy|thanks|feelings?|ideas?|thoughts?|regret|excitement|enthusiasm|support\s+for)\b/i.test(
+          after
+        )
+      ) {
+        continue;
+      }
+      const atSentenceStart = /^\s*$/.test(before) || /(?:[.!?]\s+|\n\s*)$/.test(before);
+      if (atSentenceStart) {
+        if (
+          after.trim() === '' ||
+          /^(?:\s*(?:,|\/|;|:|\)|\]|\(|\+|\d+)|\s+(?:and|or|middleware|router|routes|server|servers|api|apis|rest|backend|backends|app|apps|application|applications|framework|service|services|experience|skills?|stack)\b)/i.test(
+            after
+          )
+        ) {
+          count += 1;
+        }
+      } else {
+        count += 1;
+      }
+    } else if (
+      /(?:node(?:\.js|js)?|nestjs|fastify|koa|hapi|mern|mean|mongodb|mongoose|prisma|postgres(?:ql)?|react|typescript|javascript|graphql|rest(?:\s+apis?)?)\s*(?:,|\/|\+|&|\band\b|\bor\b|\bwith\b)\s*$/i.test(
+        before
+      ) ||
+      /^\s*(?:\/|,\s*(?:and\s+|or\s+)?)\s*(?:node(?:\.js|js)?|nestjs|fastify|koa|mongodb|mongoose|prisma|postgres(?:ql)?|mysql|redis|graphql|typescript|javascript|react)\b/i.test(
+        after
+      ) ||
+      /^\s+(?:middleware|router|routes|server|servers|framework)\b/i.test(after)
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+};
+
+const countSkillOccurrences = (
+  rawText: string,
+  normalizedText: string,
+  keyword: string,
+  aliases: string[],
+  skillsSectionNormalizedText = ''
+): number => {
+  let total = countAlias(normalizedText, aliases);
+  if (keyword === 'Go') {
+    total += countContextualGo(rawText);
+    if (total === 0 && skillsSectionNormalizedText) {
+      total += countAlias(skillsSectionNormalizedText, ['go']);
+    }
+  } else if (keyword === 'Express') {
+    total += countContextualExpress(rawText);
+    if (total === 0 && skillsSectionNormalizedText) {
+      total += countAlias(skillsSectionNormalizedText, ['express']);
+    }
+  }
+  return total;
+};
+
+const collectVisibleStrings = (value: unknown, out: string[]): void => {
+  if (typeof value === 'string') {
+    out.push(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => collectVisibleStrings(item, out));
+  } else if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (record.enabled === false) return;
+    Object.entries(record).forEach(([key, item]) => {
+      if (IGNORED_OBJECT_KEYS.has(key)) return;
+      collectVisibleStrings(item, out);
+    });
+  }
+};
+
+const getOrderedVisibleSections = (resume: ResumeLike): ResumeSectionLike[] => {
+  const sections = resume.content?.sections;
+  if (!Array.isArray(sections) || sections.length === 0) return [];
+  const sectionOrder = resume.content?.sectionOrder;
+  if (!Array.isArray(sectionOrder) || sectionOrder.length === 0) {
+    return sections.filter((s): s is ResumeSectionLike => Boolean(s) && s.enabled !== false);
+  }
+  const seenIds = new Set<string>();
+  const fromOrder: ResumeSectionLike[] = [];
+  for (const id of sectionOrder) {
+    if (typeof id !== 'string' || seenIds.has(id)) continue;
+    const match = sections.find((s) => s && s.id === id);
+    if (match) {
+      seenIds.add(id);
+      if (match.enabled !== false) {
+        fromOrder.push(match);
+      }
+    }
+  }
+  const remaining = sections.filter((s) => {
+    if (!s || s.enabled === false) return false;
+    const secId = typeof s.id === 'string' ? s.id : '';
+    if (secId && seenIds.has(secId)) return false;
+    if (secId) seenIds.add(secId);
+    return true;
+  });
+  return [...fromOrder, ...remaining];
+};
+
+const resolveSectionKind = (section: ResumeSectionLike): 'work' | 'projects' | 'skills' | 'other' => {
+  const candidates = [section.type, section.id, section.title].map((v) =>
+    typeof v === 'string' ? v.trim().toLowerCase() : ''
+  );
+  for (const token of candidates) {
+    if (!token) continue;
+    if (WORK_SECTION_TOKENS.has(token)) return 'work';
+    if (PROJECT_SECTION_TOKENS.has(token)) return 'projects';
+    if (SKILL_SECTION_TOKENS.has(token)) return 'skills';
+  }
+  return 'other';
+};
+
+const getVisibleSectionContent = (section: ResumeSectionLike): string[] => {
+  const out: string[] = [];
+  if (typeof section.content === 'string') {
+    if (section.content.trim()) {
+      out.push(section.content);
+    }
+    return out;
+  }
+  if (!Array.isArray(section.content)) return out;
+  const visibleItems = section.content.filter(
+    (item) =>
+      item !== null &&
+      item !== undefined &&
+      (typeof item !== 'object' || (item as Record<string, unknown>).enabled !== false)
+  );
+  if (visibleItems.length === 0) return out;
+  collectVisibleStrings(visibleItems, out);
+  return out;
 };
 
 const normalize = (text: string) => ` ${text.toLowerCase().replace(/\s+/g, ' ')} `;
@@ -149,13 +387,25 @@ const tokenize = (text: string) =>
 
 const sectionText = (resume: ResumeLike, types: string[]) => {
   const out: string[] = [];
-  (resume.content?.sections ?? [])
-    .filter((s) => types.some((t) => `${s.type ?? ''} ${s.id ?? ''} ${s.title ?? ''}`.toLowerCase().includes(t)))
-    .forEach((s) => collectStrings(s.content, out));
+  getOrderedVisibleSections(resume)
+    .filter((s) => {
+      const kind = resolveSectionKind(s);
+      if (kind === 'work' && (types.includes('work') || types.includes('experience'))) {
+        return true;
+      }
+      if (kind === 'projects' && types.includes('project')) {
+        return true;
+      }
+      const combined = `${s.type ?? ''} ${s.id ?? ''} ${s.title ?? ''}`.toLowerCase();
+      return types.some((t) => combined.includes(t));
+    })
+    .forEach((s) => {
+      out.push(...getVisibleSectionContent(s));
+    });
   return out.join(' ');
 };
 
-const percent = (part: number, whole: number) => (whole === 0 ? 100 : Math.round((part / whole) * 100));
+const percent = (part: number, whole: number) => (whole === 0 ? 0 : Math.round((part / whole) * 100));
 
 const scoreLabel = (score: number): JobMatchResult['label'] => {
   if (score >= 85) return 'Excellent match';
@@ -171,35 +421,73 @@ export const analyzeJobMatch = (
 ): JobMatchResult => {
   const jd = normalize(jobDescription);
 
+  const visibleSections = getOrderedVisibleSections(resume);
   const resumeStrings: string[] = [];
-  collectStrings(resume.content, resumeStrings);
-  if (resume.summary) resumeStrings.push(resume.summary);
-  const resumeText = normalize(resumeStrings.join(' '));
-  const summaryText = normalize(`${resume.summary ?? ''} ${resume.content?.basics?.summary ?? ''}`);
+  const basics = resume.content?.basics;
+  const basicsVisible = !basics || basics.enabled !== false;
+
+  if (basics && basicsVisible) {
+    collectVisibleStrings(basics, resumeStrings);
+  }
+  if (resume.summary) {
+    resumeStrings.push(resume.summary);
+  }
+
+  const skillsSectionStrings: string[] = [];
+  visibleSections.forEach((section) => {
+    const contentStrings = getVisibleSectionContent(section);
+    if (contentStrings.length > 0) {
+      if (section.title) {
+        resumeStrings.push(section.title);
+      }
+      resumeStrings.push(...contentStrings);
+      if (resolveSectionKind(section) === 'skills') {
+        skillsSectionStrings.push(...contentStrings);
+      }
+    }
+  });
+
+  const rawResumeText = resumeStrings.join(' ');
+  const resumeText = normalize(rawResumeText);
+  const skillsSectionText = skillsSectionStrings.length ? normalize(skillsSectionStrings.join(' ')) : '';
+
+  const rawSummaryText = `${resume.summary ?? ''} ${basicsVisible ? basics?.summary ?? '' : ''}`;
+  const summaryText = normalize(rawSummaryText);
   const experienceText = normalize(sectionText(resume, ['work', 'experience', 'project']));
 
   const requiredSkills = Object.entries(SKILL_DICTIONARY)
-    .map(([keyword, aliases]) => ({ keyword, aliases, occurrences: countAlias(jd, aliases) }))
+    .map(([keyword, aliases]) => ({
+      keyword,
+      aliases,
+      occurrences: countSkillOccurrences(jobDescription, jd, keyword, aliases),
+    }))
     .filter((s) => s.occurrences > 0)
     .sort((a, b) => b.occurrences - a.occurrences);
 
-  const matched = requiredSkills.filter((s) => countAlias(resumeText, s.aliases) > 0);
-  const missing = requiredSkills.filter((s) => countAlias(resumeText, s.aliases) === 0);
+  const matched = requiredSkills.filter(
+    (s) => countSkillOccurrences(rawResumeText, resumeText, s.keyword, s.aliases, skillsSectionText) > 0
+  );
+  const missing = requiredSkills.filter(
+    (s) => countSkillOccurrences(rawResumeText, resumeText, s.keyword, s.aliases, skillsSectionText) === 0
+  );
 
-  // Experience keywords: non-skill JD terms repeated at least twice, checked against resume text.
-  const skillAliasSet = new Set(Object.values(SKILL_DICTIONARY).flat());
+  // Experience keywords: non-skill JD terms repeated at least twice, checked against resume text on whole-word boundaries.
+  const skillAliasSet = new Set([
+    ...Object.values(SKILL_DICTIONARY).flat(),
+    ...requiredSkills.map((s) => s.keyword.toLowerCase()),
+  ]);
   const termCounts = new Map<string, number>();
   tokenize(jobDescription)
     .filter((t) => !skillAliasSet.has(t))
     .forEach((t) => termCounts.set(t, (termCounts.get(t) ?? 0) + 1));
   const experienceTerms = [...termCounts.entries()].filter(([, n]) => n >= 2).map(([t]) => t).slice(0, 25);
-  const experienceHits = experienceTerms.filter((t) => resumeText.includes(t)).length;
+  const experienceHits = experienceTerms.filter((t) => hasWholeWord(resumeText, t)).length;
 
   const titleTokens = tokenize(jobTitle ?? '');
   const resumeTitleText = normalize(
-    `${resume.title ?? ''} ${resume.content?.basics?.label ?? ''} ${sectionText(resume, ['work', 'experience'])}`
+    `${resume.title ?? ''} ${basicsVisible ? basics?.label ?? '' : ''} ${sectionText(resume, ['work', 'experience'])}`
   );
-  const titleHits = titleTokens.filter((t) => resumeTitleText.includes(t)).length;
+  const titleHits = titleTokens.filter((t) => hasWholeWord(resumeTitleText, t)).length;
 
   const breakdown: JobMatchBreakdown = {
     skills: percent(matched.length, requiredSkills.length),
@@ -207,12 +495,22 @@ export const analyzeJobMatch = (
     title: percent(titleHits, titleTokens.length),
   };
 
-  const weights = { skills: 0.6, experience: 0.25, title: titleTokens.length ? 0.15 : 0 };
+  const hasExtractableRequirements = requiredSkills.length > 0 || experienceTerms.length > 0;
+  const weights = {
+    skills: requiredSkills.length > 0 ? 0.6 : 0,
+    experience: experienceTerms.length > 0 ? 0.25 : 0,
+    title: titleTokens.length > 0 ? 0.15 : 0,
+  };
   const weightTotal = weights.skills + weights.experience + weights.title;
-  const score = Math.round(
-    (breakdown.skills * weights.skills + breakdown.experience * weights.experience + breakdown.title * weights.title) /
-      weightTotal
-  );
+  const score =
+    !hasExtractableRequirements || weightTotal === 0
+      ? 0
+      : Math.round(
+          (breakdown.skills * weights.skills +
+            breakdown.experience * weights.experience +
+            breakdown.title * weights.title) /
+            weightTotal
+        );
 
   const suggestions: string[] = [];
   missing.slice(0, 4).forEach((s) => {
@@ -220,13 +518,17 @@ export const analyzeJobMatch = (
     suggestions.push(`Add ${s.keyword} to your Skills section if you have experience with it${times}.`);
   });
   const topSkill = requiredSkills[0];
-  if (topSkill && countAlias(summaryText, topSkill.aliases) === 0 && countAlias(resumeText, topSkill.aliases) > 0) {
+  if (
+    topSkill &&
+    countSkillOccurrences(rawSummaryText, summaryText, topSkill.keyword, topSkill.aliases) === 0 &&
+    countSkillOccurrences(rawResumeText, resumeText, topSkill.keyword, topSkill.aliases, skillsSectionText) > 0
+  ) {
     suggestions.push(`Mention ${topSkill.keyword} in your summary — it's the most frequent skill in this job description.`);
   }
   if (!experienceText.trim()) {
     suggestions.push('Add a Work Experience or Projects section so recruiters can see where you used these skills.');
   } else if (breakdown.experience < 50 && experienceTerms.length) {
-    const missingTerms = experienceTerms.filter((t) => !resumeText.includes(t)).slice(0, 3);
+    const missingTerms = experienceTerms.filter((t) => !hasWholeWord(resumeText, t)).slice(0, 3);
     if (missingTerms.length) {
       suggestions.push(`Reflect the job's language in your experience bullets, e.g. "${missingTerms.join('", "')}".`);
     }
