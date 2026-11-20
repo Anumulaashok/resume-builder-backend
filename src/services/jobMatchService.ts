@@ -29,7 +29,7 @@ interface ResumeLike {
 }
 
 // Canonical skill -> aliases (all lowercase); aliases are matched as whole words/phrases.
-const SKILL_DICTIONARY: Record<string, string[]> = {
+export const SKILL_DICTIONARY: Record<string, string[]> = {
   JavaScript: ['javascript', 'js', 'es6', 'ecmascript'],
   TypeScript: ['typescript', 'ts'],
   React: ['react', 'reactjs', 'react.js'],
@@ -162,6 +162,16 @@ const scoreLabel = (score: number): JobMatchResult['label'] => {
   if (score >= 65) return 'Good match';
   if (score >= 40) return 'Fair match';
   return 'Low match';
+};
+
+export const extractSkillsFromText = (text: string): string[] => {
+  if (typeof text !== 'string' || !text.trim()) return [];
+  const normalized = normalize(text);
+  return Object.entries(SKILL_DICTIONARY)
+    .map(([keyword, aliases]) => ({ keyword, occurrences: countAlias(normalized, aliases) }))
+    .filter((entry) => entry.occurrences > 0)
+    .sort((a, b) => b.occurrences - a.occurrences)
+    .map((entry) => entry.keyword);
 };
 
 export const analyzeJobMatch = (

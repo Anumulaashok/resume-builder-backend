@@ -28,6 +28,7 @@ export interface IResume extends Document {
   templateId?: string;
   themeConfig?: Record<string, any>;
   sharing?: ISharing;
+  source_fact_ids?: string[];
   content: {
     basics: {
       name: string;
@@ -41,6 +42,7 @@ export interface IResume extends Document {
         countryCode?: string;
         postalCode?: string;
       };
+      source_fact_ids?: string[];
     };
     sections: Array<{
       id: string;
@@ -48,8 +50,10 @@ export interface IResume extends Document {
       title: string;
       content: any[];
       isCustom?: boolean;
+      source_fact_ids?: string[];
     }>;
     sectionOrder: string[];
+    source_fact_ids?: string[];
   };
   history?: Array<{
     title?: string;
@@ -68,6 +72,7 @@ const resumeSchema = new Schema({
   summary: String,
   templateId: String,
   themeConfig: Schema.Types.Mixed,
+  source_fact_ids: { type: [String], default: undefined },
   sharing: {
     isPublic: { type: Boolean, default: false },
     shareToken: { type: String, default: null, index: true },
@@ -102,16 +107,19 @@ const resumeSchema = new Schema({
         city: String,
         countryCode: String,
         postalCode: String
-      }
+      },
+      source_fact_ids: { type: [String], default: undefined }
     },
     sections: [{
       id: { type: String, required: true },
       type: { type: String, required: true },
       title: { type: String, required: true },
       content: [Schema.Types.Mixed],
-      isCustom: Boolean
+      isCustom: Boolean,
+      source_fact_ids: { type: [String], default: undefined }
     }],
-    sectionOrder: [String]
+    sectionOrder: [String],
+    source_fact_ids: { type: [String], default: undefined }
   },
   history: [{
     title: String,

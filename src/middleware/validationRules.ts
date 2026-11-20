@@ -224,3 +224,25 @@ export const coverLetterUpdateValidation = [
 export const coverLetterGenerateValidation = [
   body('prompt').optional().isString().isLength({ max: 5000 })
 ];
+
+export const bulletCoachValidation = [
+  body('text')
+    .isString()
+    .withMessage('Bullet text must be a string')
+    .trim()
+    .notEmpty()
+    .withMessage('Bullet text is required')
+    .isLength({ max: 5000 })
+    .withMessage('Bullet text must be 5000 characters or less'),
+  body('action')
+    .optional()
+    .isIn(['rewrite', 'shorten', 'improve'])
+    .withMessage('action must be rewrite, shorten, or improve'),
+  body('userMetric')
+    .optional({ values: 'null' })
+    .custom(isPlainObject)
+    .withMessage('userMetric must be an object'),
+  body('userMetric.category').optional().isString().isLength({ max: 120 }),
+  body('userMetric.value').optional().isString().isLength({ max: 120 })
+];
+

@@ -14,6 +14,7 @@ const IGNORED_TEXT_KEYS = new Set([
   'isCustom',
   'enabled',
   'current',
+  'source_fact_ids',
 ]);
 
 export interface HistoryEntryLike {
