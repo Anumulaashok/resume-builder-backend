@@ -1,6 +1,13 @@
+export interface ResumeProfile {
+  network?: string;
+  username?: string;
+  url?: string;
+}
+
 export interface Location {
   address: string;
   city: string;
+  region?: string;
   countryCode: string;
   postalCode: string;
 }
@@ -10,8 +17,15 @@ export interface Basics {
   label: string;
   email: string;
   phone: string;
+  url?: string;
+  website?: string;
+  portfolioUrl?: string;
+  linkedin?: string;
+  github?: string;
+  image?: string;
   summary: string;
   location: Location;
+  profiles?: ResumeProfile[];
 }
 
 export interface ResumeSection {
@@ -19,6 +33,7 @@ export interface ResumeSection {
   type: string;
   title: string;
   content: any[];
+  enabled?: boolean;
   isCustom?: boolean;
 }
 

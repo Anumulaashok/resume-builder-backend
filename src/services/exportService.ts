@@ -280,19 +280,54 @@ const VALID_DATE_FORMATS = new Set<DateFormatPattern>([
   'YYYY',
 ]);
 
+const ALWAYS_STRIP_HTML_TAG_NAMES =
+  'script|style|iframe|frame|frameset|noscript|embed|applet|svg|math|base|meta|link|img|br|hr|div|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|blockquote|pre|h[1-6]';
+
+const KNOWN_HTML_TAG_NAMES =
+  'a|abbr|address|area|article|aside|audio|b|bdi|bdo|button|canvas|caption|cite|code|col|colgroup|data|datalist|dd|del|details|dfn|dialog|dl|dt|em|fieldset|figcaption|figure|footer|form|header|hgroup|html|head|body|i|input|ins|kbd|label|legend|main|map|mark|menu|meter|nav|object|optgroup|option|output|p|param|picture|progress|q|rp|rt|ruby|s|samp|search|section|select|slot|small|source|span|strong|sub|summary|sup|template|textarea|time|title|track|u|var|video|wbr';
+
+const ALWAYS_STRIP_HTML_TAG_REGEX = new RegExp(
+  `<(?:${ALWAYS_STRIP_HTML_TAG_NAMES})\\b(?:\\s[^<>]*)?>`,
+  'gi'
+);
+
+const STANDALONE_KNOWN_HTML_TAG_REGEX = new RegExp(
+  `(?<![A-Za-z0-9_$.])<(?:${KNOWN_HTML_TAG_NAMES})\\b(?:\\s[^<>]*)?>`,
+  'gi'
+);
+
+const PAIRED_HTML_TAG_REGEX =
+  /<([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^<>]*)?>([\s\S]*?)<\/\1\s*>/gi;
+
+const ATTRIBUTED_HTML_TAG_REGEX =
+  /<[a-zA-Z][a-zA-Z0-9-]*\s+[a-zA-Z_:][a-zA-Z0-9_.:-]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+)(?:\s[^<>]*)?>/g;
+
 /**
  * Strips HTML/script markup, BiDi spoofing characters, and ASCII control codes
- * while preserving UTF-8 characters and intentional line breaks.
+ * while preserving UTF-8 characters, generic type expressions, and intentional line breaks.
  */
 export function sanitizeText(value: unknown, maxLength = MAX_FIELD_LENGTH): string {
   if (typeof value !== 'string') {
     return '';
   }
 
-  const cleaned = value
+  let htmlStripped = value
+    .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<\/?[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*)?>/g, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+
+  for (let pass = 0; pass < 8; pass += 1) {
+    const next = htmlStripped.replace(PAIRED_HTML_TAG_REGEX, '$2');
+    if (next === htmlStripped) break;
+    htmlStripped = next;
+  }
+
+  const cleaned = htmlStripped
+    .replace(ATTRIBUTED_HTML_TAG_REGEX, '')
+    .replace(/<[a-zA-Z][a-zA-Z0-9-]*(?:\s[^<>]*?)?\/>/g, '')
+    .replace(/<\/[a-zA-Z][a-zA-Z0-9-]*\s*>/g, '')
+    .replace(ALWAYS_STRIP_HTML_TAG_REGEX, '')
+    .replace(STANDALONE_KNOWN_HTML_TAG_REGEX, '')
     .replace(/\r\n?/g, '\n')
     // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u202A-\u202E\u2066-\u2069]/g, '')
@@ -421,6 +456,17 @@ export function formatLinkLabel(href: string): string {
     .trim()
     .replace(/^https?:\/\/(www\.)?/i, '')
     .replace(/\/$/, '');
+}
+
+function normalizeComparableUrl(href: string): string {
+  try {
+    const parsed = new URL(href);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    const path = parsed.pathname.replace(/\/+$/, '').toLowerCase();
+    return `${host}${path}${parsed.search}${parsed.hash.toLowerCase()}`;
+  } catch {
+    return formatLinkLabel(href).toLowerCase();
+  }
 }
 
 export function sanitizeEmail(rawEmail: unknown): string {
@@ -852,21 +898,29 @@ export function prepareExportableResume(rawResume: Record<string, any>): Prepare
     .join(', ');
 
   const links: ExportLink[] = [];
+  const seenLinkUrls = new Set<string>();
+  const pushUniqueLink = (entry: ExportLink) => {
+    const comparable = normalizeComparableUrl(entry.href);
+    if (!comparable || seenLinkUrls.has(comparable)) return;
+    seenLinkUrls.add(comparable);
+    links.push(entry);
+  };
+
   const directUrl = sanitizeSafeExternalUrl(
     rawBasics.url || rawBasics.website || rawBasics.portfolioUrl
   );
   if (directUrl) {
-    links.push({ key: 'Website', label: formatLinkLabel(directUrl), href: directUrl });
+    pushUniqueLink({ key: 'Website', label: formatLinkLabel(directUrl), href: directUrl });
   }
 
   const linkedinUrl = sanitizeSafeExternalUrl(rawBasics.linkedin);
   if (linkedinUrl) {
-    links.push({ key: 'LinkedIn', label: formatLinkLabel(linkedinUrl), href: linkedinUrl });
+    pushUniqueLink({ key: 'LinkedIn', label: formatLinkLabel(linkedinUrl), href: linkedinUrl });
   }
 
   const githubUrl = sanitizeSafeExternalUrl(rawBasics.github);
   if (githubUrl) {
-    links.push({ key: 'GitHub', label: formatLinkLabel(githubUrl), href: githubUrl });
+    pushUniqueLink({ key: 'GitHub', label: formatLinkLabel(githubUrl), href: githubUrl });
   }
 
   if (Array.isArray(rawBasics.profiles)) {
@@ -876,7 +930,7 @@ export function prepareExportableResume(rawResume: Record<string, any>): Prepare
       if (!href) return;
       const network = sanitizeText(profile.network, 40);
       const username = sanitizeText(profile.username, 60);
-      links.push({
+      pushUniqueLink({
         key: network || `Profile ${idx + 1}`,
         label: formatLinkLabel(href) || network || username,
         href,
