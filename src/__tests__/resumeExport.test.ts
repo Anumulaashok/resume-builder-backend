@@ -474,5 +474,87 @@ describe('ATS Plain Text Export Endpoint (GET /api/resumes/:resumeId/export.txt)
       expect(txt).not.toContain('javascript:');
       expect(txt).not.toContain('<script');
     });
+
+    it('preserves generic type annotations while stripping HTML comments, attributed tags, and markup', () => {
+      expect(sanitizeText('Built APIs returning List<String> and Promise<void>')).toBe(
+        'Built APIs returning List<String> and Promise<void>'
+      );
+      expect(sanitizeText('Typed UI primitives as React.FC<Props>, Set<S>, and Option<P>')).toBe(
+        'Typed UI primitives as React.FC<Props>, Set<S>, and Option<P>'
+      );
+      expect(
+        sanitizeText(
+          '<!-- internal note --><b>Lead</b> <span class="badge" data-x="1">Platform</span> Engineer<br/>'
+        )
+      ).toBe('Lead Platform Engineer');
+
+      const engineeringResume = buildSampleResumeRecord({
+        content: {
+          basics: {
+            name: 'Jordan Lee',
+            label: 'Staff TypeScript & JVM Engineer',
+            email: 'jordan@example.com',
+            url: 'https://jordanlee.dev/',
+            linkedin: 'https://www.linkedin.com/in/jordanlee/',
+            github: 'https://github.com/jordanlee',
+            profiles: [
+              { network: 'LinkedIn', url: 'http://linkedin.com/in/jordanlee' },
+              { network: 'GitHub', url: 'https://www.github.com/jordanlee/' },
+              { network: 'Portfolio', url: 'https://jordanlee.dev' },
+              { network: 'Blog', url: 'https://writing.jordanlee.dev' },
+            ],
+            location: {
+              city: 'Austin',
+              region: 'TX',
+              countryCode: 'US',
+            },
+            summary:
+              '<!-- draft -->Designed <strong>SDKs</strong> using List<String>, Promise<void>, and React.FC<Props>.',
+          },
+          sections: [
+            {
+              id: 'sec-work',
+              type: 'WorkItem',
+              title: 'Experience',
+              content: [
+                {
+                  id: 'w-generics',
+                  company: 'CloudScale',
+                  position: 'Principal Engineer',
+                  startDate: '2023',
+                  current: true,
+                  highlights: [
+                    'Migrated Java pipelines to List<String> and Set<S> caches',
+                    'Shipped async hooks typed with Promise<void>, Option<P>, and React.FC<Props>',
+                  ],
+                },
+              ],
+            },
+          ],
+          sectionOrder: ['sec-work'],
+        },
+      });
+
+      const txt = renderResumePlainText(engineeringResume);
+      expect(txt).toContain('Location: Austin, TX, US');
+      expect(txt).toContain(
+        'Designed SDKs using List<String>, Promise<void>, and React.FC<Props>.'
+      );
+      expect(txt).toContain('- Migrated Java pipelines to List<String> and Set<S> caches');
+      expect(txt).toContain(
+        '- Shipped async hooks typed with Promise<void>, Option<P>, and React.FC<Props>'
+      );
+      expect(txt).not.toContain('<!-- draft -->');
+      expect(txt).not.toContain('<strong>');
+
+      // Direct links and matching basics.profiles entries must be deduplicated
+      const linkedinMatches = txt.match(/linkedin\.com\/in\/jordanlee/gi) || [];
+      const githubMatches = txt.match(/github\.com\/jordanlee/gi) || [];
+      const websiteMatches = txt.match(/https?:\/\/jordanlee\.dev/gi) || [];
+      expect(linkedinMatches).toHaveLength(1);
+      expect(githubMatches).toHaveLength(1);
+      expect(websiteMatches).toHaveLength(1);
+      expect(txt).toContain('writing.jordanlee.dev');
+    });
   });
 });

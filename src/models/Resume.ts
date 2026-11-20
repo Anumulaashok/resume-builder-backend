@@ -21,6 +21,12 @@ export interface ISharing {
   privacy: IPrivacySettings;
 }
 
+export interface IResumeProfile {
+  network?: string;
+  username?: string;
+  url?: string;
+}
+
 export interface IResume extends Document {
   userId: mongoose.Types.ObjectId;
   title: string;
@@ -34,19 +40,28 @@ export interface IResume extends Document {
       label?: string;
       email: string;
       phone?: string;
+      url?: string;
+      website?: string;
+      portfolioUrl?: string;
+      linkedin?: string;
+      github?: string;
+      image?: string;
       summary?: string;
       location?: {
         address?: string;
         city?: string;
+        region?: string;
         countryCode?: string;
         postalCode?: string;
       };
+      profiles?: IResumeProfile[];
     };
     sections: Array<{
       id: string;
       type: string;
       title: string;
       content: any[];
+      enabled?: boolean;
       isCustom?: boolean;
     }>;
     sectionOrder: string[];
@@ -96,12 +111,30 @@ const resumeSchema = new Schema({
       label: String,
       email: { type: String, required: true },
       phone: String,
+      url: String,
+      website: String,
+      portfolioUrl: String,
+      linkedin: String,
+      github: String,
+      image: String,
       summary: String,
       location: {
         address: String,
         city: String,
+        region: String,
         countryCode: String,
         postalCode: String
+      },
+      profiles: {
+        type: [
+          {
+            _id: false,
+            network: String,
+            username: String,
+            url: String
+          }
+        ],
+        default: undefined
       }
     },
     sections: [{
@@ -109,6 +142,7 @@ const resumeSchema = new Schema({
       type: { type: String, required: true },
       title: { type: String, required: true },
       content: [Schema.Types.Mixed],
+      enabled: { type: Boolean, default: true },
       isCustom: Boolean
     }],
     sectionOrder: [String]
